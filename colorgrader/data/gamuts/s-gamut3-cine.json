@@ -1,0 +1,26 @@
+{
+  "id": "s-gamut3-cine",
+  "name": "Sony S-Gamut3.Cine",
+  "primaries": [
+    [
+      0.766,
+      0.275
+    ],
+    [
+      0.225,
+      0.8
+    ],
+    [
+      0.089,
+      -0.087
+    ]
+  ],
+  "white": [
+    0.3127,
+    0.329
+  ],
+  "source": "Sony S-Gamut3.Cine technical summary",
+  "labels": {
+    "resolve": "S-Gamut3.Cine"
+  }
+}

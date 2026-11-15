@@ -1,0 +1,26 @@
+{
+  "id": "davinci-wide-gamut",
+  "name": "DaVinci Wide Gamut",
+  "primaries": [
+    [
+      0.8,
+      0.313
+    ],
+    [
+      0.1682,
+      0.9877
+    ],
+    [
+      0.079,
+      -0.1155
+    ]
+  ],
+  "white": [
+    0.3127,
+    0.329
+  ],
+  "source": "Blackmagic Design, DaVinci Wide Gamut Intermediate white paper",
+  "labels": {
+    "resolve": "DaVinci Wide Gamut"
+  }
+}

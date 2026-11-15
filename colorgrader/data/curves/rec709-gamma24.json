@@ -1,0 +1,22 @@
+{
+  "id": "rec709-gamma24",
+  "name": "Rec.709 (Gamma 2.4 display)",
+  "kind": "display",
+  "code_values": "normalized",
+  "recommended_range": "auto",
+  "source": "ITU-R BT.1886 reference EOTF, pure power 2.4",
+  "notes": "For finished Rec.709 pictures: film simulations, standard phone clips.",
+  "labels": {
+    "resolve": "Gamma 2.4"
+  },
+  "segments": [
+    {
+      "type": "pow",
+      "a": 1.0,
+      "b": 0.0,
+      "c": 1.0,
+      "d": 0.0,
+      "p": 0.4166666666666667
+    }
+  ]
+}

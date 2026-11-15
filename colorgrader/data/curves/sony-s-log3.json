@@ -1,0 +1,28 @@
+{
+  "id": "sony-s-log3",
+  "name": "Sony S-Log3",
+  "kind": "scene",
+  "code_values": "absolute",
+  "recommended_range": "auto",
+  "source": "Sony, Technical Summary for S-Gamut3.Cine/S-Log3 and S-Gamut3/S-Log3",
+  "notes": "18% gray = code 420, 0% = 95, 90% = 598 (10-bit).",
+  "labels": {
+    "resolve": "S-Log3"
+  },
+  "segments": [
+    {
+      "type": "lin",
+      "e": 6.621943711775822,
+      "f": 0.09286412512218964,
+      "below": 0.01125
+    },
+    {
+      "type": "log",
+      "base": 10,
+      "a": 5.2631578947368425,
+      "b": 0.05263157894736842,
+      "c": 0.25562072336265884,
+      "d": 0.41055718475073316
+    }
+  ]
+}

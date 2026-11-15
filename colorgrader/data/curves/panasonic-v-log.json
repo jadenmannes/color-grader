@@ -1,0 +1,28 @@
+{
+  "id": "panasonic-v-log",
+  "name": "Panasonic V-Log",
+  "kind": "scene",
+  "code_values": "absolute",
+  "recommended_range": "auto",
+  "source": "Panasonic, V-Log/V-Gamut Reference Manual (2014)",
+  "notes": "18% gray = code 433, 0% = 128 (10-bit).",
+  "labels": {
+    "resolve": "Panasonic V-Log"
+  },
+  "segments": [
+    {
+      "type": "lin",
+      "e": 5.6,
+      "f": 0.125,
+      "below": 0.01
+    },
+    {
+      "type": "log",
+      "base": 10,
+      "a": 1.0,
+      "b": 0.00873,
+      "c": 0.241514,
+      "d": 0.598206
+    }
+  ]
+}

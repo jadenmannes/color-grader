@@ -1,0 +1,28 @@
+{
+  "id": "davinci-intermediate",
+  "name": "DaVinci Intermediate",
+  "kind": "scene",
+  "code_values": "normalized",
+  "recommended_range": "auto",
+  "source": "Blackmagic Design, DaVinci Wide Gamut Intermediate white paper (2021)",
+  "notes": "The app's working curve. 18% gray = 0.336.",
+  "labels": {
+    "resolve": "DaVinci Intermediate"
+  },
+  "segments": [
+    {
+      "type": "lin",
+      "e": 10.44426855,
+      "f": 0.0,
+      "below": 0.00262409
+    },
+    {
+      "type": "log",
+      "base": 2,
+      "a": 1.0,
+      "b": 0.0075,
+      "c": 0.07329248,
+      "d": 0.51304736
+    }
+  ]
+}

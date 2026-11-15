@@ -1,0 +1,31 @@
+{
+  "id": "nikon-n-log",
+  "name": "Nikon N-Log",
+  "kind": "scene",
+  "code_values": "absolute",
+  "recommended_range": "auto",
+  "source": "Nikon, N-Log Specification Document v1.0.0",
+  "notes": "18% gray = code 372 (10-bit).",
+  "labels": {
+    "resolve": "Nikon N-Log"
+  },
+  "segments": [
+    {
+      "type": "pow",
+      "a": 1.0,
+      "b": 0.0075,
+      "c": 0.635386119257087,
+      "d": 0.0,
+      "p": 0.3333333333333333,
+      "below": 0.328
+    },
+    {
+      "type": "log",
+      "base": 2.718281828459045,
+      "a": 1.0,
+      "b": 0.0,
+      "c": 0.1466275659824047,
+      "d": 0.6050830889540567
+    }
+  ]
+}

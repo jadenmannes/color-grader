@@ -1,0 +1,37 @@
+{
+  "id": "canon-log-3",
+  "name": "Canon Log 3",
+  "kind": "scene",
+  "code_values": "absolute",
+  "recommended_range": "auto",
+  "source": "Canon, Canon Log Gamma Curves white paper (2020), v1.2 constants",
+  "notes": "Canon defines x with 90% reflectance = 1.0. Constants here take 18% gray = 0.18.",
+  "labels": {
+    "resolve": "Canon Log 3"
+  },
+  "segments": [
+    {
+      "type": "log",
+      "base": 10,
+      "a": -16.648055555555555,
+      "b": 1.0,
+      "c": -0.36726845,
+      "d": 0.12783901,
+      "below": -0.0126
+    },
+    {
+      "type": "lin",
+      "e": 2.1949775555555555,
+      "f": 0.12512219,
+      "below": 0.0126
+    },
+    {
+      "type": "log",
+      "base": 10,
+      "a": 16.648055555555555,
+      "b": 1.0,
+      "c": 0.36726845,
+      "d": 0.12240537
+    }
+  ]
+}

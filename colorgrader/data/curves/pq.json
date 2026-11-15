@@ -1,0 +1,19 @@
+{
+  "id": "pq",
+  "name": "PQ (ST 2084, HDR10)",
+  "kind": "pq",
+  "code_values": "normalized",
+  "recommended_range": "auto",
+  "source": "SMPTE ST 2084, ITU-R BT.2100. Display light converts to scene light through the BT.2408 PQ-to-HLG bridge (1000 nit HLG OOTF, gamma 1.2).",
+  "notes": "203 nits (HDR reference white) decodes to 1.0.",
+  "labels": {
+    "resolve": "Rec.2100 ST2084"
+  },
+  "params": {
+    "reference_white_nits": 203.0,
+    "bridge_peak_nits": 1000.0,
+    "ootf_gamma": 1.2,
+    "hlg_reference_white": 0.26496255978640015
+  },
+  "segments": []
+}

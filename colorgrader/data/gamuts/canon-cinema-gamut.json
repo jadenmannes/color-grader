@@ -1,0 +1,26 @@
+{
+  "id": "canon-cinema-gamut",
+  "name": "Canon Cinema Gamut",
+  "primaries": [
+    [
+      0.74,
+      0.27
+    ],
+    [
+      0.17,
+      1.14
+    ],
+    [
+      0.08,
+      -0.1
+    ]
+  ],
+  "white": [
+    0.3127,
+    0.329
+  ],
+  "source": "Canon Cinema Gamut white paper",
+  "labels": {
+    "resolve": "Canon Cinema Gamut"
+  }
+}

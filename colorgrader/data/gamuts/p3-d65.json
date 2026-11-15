@@ -1,0 +1,26 @@
+{
+  "id": "p3-d65",
+  "name": "P3-D65 (Display P3)",
+  "primaries": [
+    [
+      0.68,
+      0.32
+    ],
+    [
+      0.265,
+      0.69
+    ],
+    [
+      0.15,
+      0.06
+    ]
+  ],
+  "white": [
+    0.3127,
+    0.329
+  ],
+  "source": "SMPTE RP 431-2 primaries, D65 white",
+  "labels": {
+    "resolve": "P3-D65"
+  }
+}

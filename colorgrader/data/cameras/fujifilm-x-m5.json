@@ -1,0 +1,213 @@
+{
+  "schema": 1,
+  "id": "fujifilm-x-m5",
+  "name": "Fujifilm X-M5",
+  "maker": "FUJIFILM",
+  "metadata_names": [
+    "X-M5"
+  ],
+  "notes": "F-Log and F-Log2 record F-Gamut (Rec.2020 primaries). Film simulations record finished Rec.709 pictures.",
+  "profiles": [
+    {
+      "id": "f-log2",
+      "name": "F-Log2",
+      "input": {
+        "type": "curve",
+        "curve": "fujifilm-f-log2",
+        "gamut": "f-gamut"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          10
+        ],
+        "transfer": [],
+        "primaries": [
+          "bt2020"
+        ],
+        "image": "log"
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "f-log",
+      "name": "F-Log",
+      "input": {
+        "type": "curve",
+        "curve": "fujifilm-f-log",
+        "gamut": "f-gamut"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          10
+        ],
+        "transfer": [],
+        "primaries": [
+          "bt2020"
+        ],
+        "image": "log"
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "film-simulation",
+      "name": "Film simulation (Eterna, Classic Chrome and others)",
+      "input": {
+        "type": "curve",
+        "curve": "rec709-gamma24",
+        "gamut": "rec709"
+      },
+      "bit_depth": 8,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          8,
+          10
+        ],
+        "transfer": [
+          "bt709"
+        ],
+        "primaries": [
+          "bt709"
+        ],
+        "image": "display"
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "hlg",
+      "name": "HLG",
+      "input": {
+        "type": "curve",
+        "curve": "hlg",
+        "gamut": "rec2020"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          10
+        ],
+        "transfer": [
+          "arib-std-b67"
+        ],
+        "primaries": [
+          "bt2020"
+        ],
+        "image": "any"
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    }
+  ],
+  "definitions": {
+    "curves": {
+      "fujifilm-f-log": {
+        "id": "fujifilm-f-log",
+        "name": "Fujifilm F-Log",
+        "kind": "scene",
+        "code_values": "absolute",
+        "recommended_range": "auto",
+        "source": "Fujifilm, F-Log Data Sheet Ver.1.1",
+        "notes": "0% = code 95, 18% gray = 470, 90% = 705 (10-bit).",
+        "labels": {
+          "resolve": "FujiFilm F-Log"
+        },
+        "segments": [
+          {
+            "type": "lin",
+            "e": 8.735631,
+            "f": 0.092864,
+            "below": 0.00089
+          },
+          {
+            "type": "log",
+            "base": 10,
+            "a": 0.555556,
+            "b": 0.009468,
+            "c": 0.344676,
+            "d": 0.790453
+          }
+        ]
+      },
+      "fujifilm-f-log2": {
+        "id": "fujifilm-f-log2",
+        "name": "Fujifilm F-Log2",
+        "kind": "scene",
+        "code_values": "absolute",
+        "recommended_range": "auto",
+        "source": "Fujifilm, F-Log2 Data Sheet Ver.1.0",
+        "notes": "0% = code 95, 18% gray = 400, 90% = 570 (10-bit).",
+        "labels": {
+          "resolve": "FujiFilm F-Log2"
+        },
+        "segments": [
+          {
+            "type": "lin",
+            "e": 8.799461,
+            "f": 0.092864,
+            "below": 0.000889
+          },
+          {
+            "type": "log",
+            "base": 10,
+            "a": 5.555556,
+            "b": 0.064829,
+            "c": 0.245281,
+            "d": 0.384316
+          }
+        ]
+      }
+    },
+    "gamuts": {
+      "f-gamut": {
+        "id": "f-gamut",
+        "name": "Fujifilm F-Gamut",
+        "primaries": [
+          [
+            0.708,
+            0.292
+          ],
+          [
+            0.17,
+            0.797
+          ],
+          [
+            0.131,
+            0.046
+          ]
+        ],
+        "white": [
+          0.3127,
+          0.329
+        ],
+        "source": "Fujifilm F-Log Data Sheet. Same primaries as ITU-R BT.2020.",
+        "labels": {
+          "resolve": "Rec.2020"
+        }
+      }
+    }
+  }
+}

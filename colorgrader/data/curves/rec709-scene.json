@@ -1,0 +1,28 @@
+{
+  "id": "rec709-scene",
+  "name": "Rec.709 (scene, BT.709 OETF)",
+  "kind": "scene",
+  "code_values": "normalized",
+  "recommended_range": "auto",
+  "source": "ITU-R BT.709-6 OETF",
+  "notes": "Camera encoding with no tone curve. Rare in practice. Prefer Rec.709 (Gamma 2.4 display) for finished pictures.",
+  "labels": {
+    "resolve": "Rec.709"
+  },
+  "segments": [
+    {
+      "type": "lin",
+      "e": 4.5,
+      "f": 0.0,
+      "below": 0.018
+    },
+    {
+      "type": "pow",
+      "a": 1.0,
+      "b": 0.0,
+      "c": 1.099,
+      "d": -0.099,
+      "p": 0.45
+    }
+  ]
+}

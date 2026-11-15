@@ -1,0 +1,31 @@
+{
+  "id": "hlg",
+  "name": "HLG (BT.2100)",
+  "kind": "scene",
+  "code_values": "normalized",
+  "recommended_range": "auto",
+  "source": "ITU-R BT.2100-2 HLG OETF, reference white per ITU-R BT.2408",
+  "notes": "Inverse OETF gives scene light. 75% signal (HDR reference white) decodes to 1.0.",
+  "labels": {
+    "resolve": "Rec.2100 HLG"
+  },
+  "segments": [
+    {
+      "type": "pow",
+      "a": 0.7948876793592005,
+      "b": 0.0,
+      "c": 1.0,
+      "d": 0.0,
+      "p": 0.5,
+      "below": 0.3145098439587562
+    },
+    {
+      "type": "log",
+      "base": 2.718281828459045,
+      "a": 3.179550717436802,
+      "b": -0.28466892,
+      "c": 0.17883277,
+      "d": 0.55991073
+    }
+  ]
+}

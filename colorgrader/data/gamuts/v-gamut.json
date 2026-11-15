@@ -1,0 +1,26 @@
+{
+  "id": "v-gamut",
+  "name": "Panasonic V-Gamut",
+  "primaries": [
+    [
+      0.73,
+      0.28
+    ],
+    [
+      0.165,
+      0.84
+    ],
+    [
+      0.1,
+      -0.03
+    ]
+  ],
+  "white": [
+    0.3127,
+    0.329
+  ],
+  "source": "Panasonic V-Log/V-Gamut Reference Manual",
+  "labels": {
+    "resolve": "Panasonic V-Gamut"
+  }
+}

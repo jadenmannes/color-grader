@@ -1,0 +1,18 @@
+{
+  "id": "linear",
+  "name": "Linear",
+  "kind": "scene",
+  "code_values": "normalized",
+  "recommended_range": "auto",
+  "source": "Identity",
+  "labels": {
+    "resolve": "Linear"
+  },
+  "segments": [
+    {
+      "type": "lin",
+      "e": 1.0,
+      "f": 0.0
+    }
+  ]
+}

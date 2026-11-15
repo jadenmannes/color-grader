@@ -1,0 +1,26 @@
+{
+  "id": "s-gamut3",
+  "name": "Sony S-Gamut3",
+  "primaries": [
+    [
+      0.73,
+      0.28
+    ],
+    [
+      0.14,
+      0.855
+    ],
+    [
+      0.1,
+      -0.05
+    ]
+  ],
+  "white": [
+    0.3127,
+    0.329
+  ],
+  "source": "Sony S-Gamut3 technical summary",
+  "labels": {
+    "resolve": "S-Gamut3"
+  }
+}

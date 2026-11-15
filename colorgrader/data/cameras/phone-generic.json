@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "id": "phone-generic",
+  "name": "Phone (generic)",
+  "maker": "",
+  "metadata_names": [
+    "iPhone",
+    "Apple",
+    "samsung",
+    "SM-",
+    "Pixel",
+    "Google",
+    "Xiaomi",
+    "OnePlus",
+    "HUAWEI",
+    "OPPO",
+    "vivo",
+    "com.android",
+    "com.apple.quicktime"
+  ],
+  "notes": "Covers standard clips, HDR clips (HLG and PQ) and Apple Log. The transfer tag in the file picks the profile.",
+  "profiles": [
+    {
+      "id": "standard",
+      "name": "Standard (Rec.709)",
+      "input": {
+        "type": "curve",
+        "curve": "rec709-gamma24",
+        "gamut": "rec709"
+      },
+      "bit_depth": 8,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          8,
+          10
+        ],
+        "transfer": [
+          "bt709",
+          "smpte170m",
+          "bt470bg",
+          "iec61966-2-1"
+        ],
+        "primaries": [
+          "bt709",
+          "smpte170m",
+          "bt470bg"
+        ],
+        "image": "display"
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "hdr-hlg",
+      "name": "HDR (HLG, Dolby Vision)",
+      "input": {
+        "type": "curve",
+        "curve": "hlg",
+        "gamut": "rec2020"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          10
+        ],
+        "transfer": [
+          "arib-std-b67"
+        ],
+        "primaries": [
+          "bt2020"
+        ],
+        "image": "any"
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "hdr-pq",
+      "name": "HDR (PQ, HDR10 and HDR10+)",
+      "input": {
+        "type": "curve",
+        "curve": "pq",
+        "gamut": "rec2020"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          10
+        ],
+        "transfer": [
+          "smpte2084"
+        ],
+        "primaries": [
+          "bt2020"
+        ],
+        "image": "any"
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "apple-log",
+      "name": "Apple Log",
+      "input": {
+        "type": "curve",
+        "curve": "apple-log",
+        "gamut": "rec2020"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          10
+        ],
+        "transfer": [
+          "unknown",
+          "unspecified",
+          ""
+        ],
+        "primaries": [
+          "bt2020"
+        ],
+        "image": "log"
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    }
+  ],
+  "definitions": {
+    "curves": {},
+    "gamuts": {}
+  }
+}
