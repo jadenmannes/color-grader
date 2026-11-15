@@ -375,7 +375,11 @@ def detect(info: dict[str, Any]) -> dict[str, Any]:
     result["profile_id"] = top["profile_id"]
     gap = top["score"] - ranked[1]["score"] if len(ranked) > 1 else 99.0
     tag_based = any("tag" in w for w in top["why"])
-    if top["score"] >= 3.0 and gap >= 1.5:
+    if len(ranked) == 1 and top["score"] >= 0.0:
+        result["method"] = "metadata"
+        result["needs_confirm"] = False
+        result["message"] = f"{cam['name']}, {top['profile_name']}: camera name read from metadata."
+    elif top["score"] >= 3.0 and gap >= 1.5:
         result["method"] = "metadata" if tag_based else "image"
         result["needs_confirm"] = False
         result["message"] = f"{cam['name']}, {top['profile_name']}: read from metadata."

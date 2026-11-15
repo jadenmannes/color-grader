@@ -1,0 +1,38 @@
+"""Test setup: every test session gets its own empty user folder."""
+import os
+import tempfile
+from pathlib import Path
+
+import pytest
+
+_HOME = tempfile.mkdtemp(prefix="colorgrader-test-")
+os.environ["COLORGRADER_HOME"] = _HOME
+
+
+@pytest.fixture(scope="session")
+def home() -> Path:
+    return Path(_HOME)
+
+
+@pytest.fixture(scope="session")
+def workdir(home) -> Path:
+    d = home / "work"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed():
+    from colorgrader import cameras
+
+    cameras.seed()
+
+
+@pytest.fixture()
+def client():
+    from fastapi.testclient import TestClient
+
+    from colorgrader import project, server
+
+    project.get().reset()
+    return TestClient(server.app)

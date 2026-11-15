@@ -47,9 +47,10 @@ class Curve:
                     raise CurveError(f"curve {self.id}: unknown segment type {s.get('type')!r}")
                 if i < len(self.segments) - 1 and "below" not in s:
                     raise CurveError(f"curve {self.id}: segment {i} needs a 'below' bound")
-            # code value at each boundary, for decoding
-            self._y_bounds = [float(self._enc_seg(s, np.array([s["below"]], dtype=np.float64))[0])
-                              for s in self.segments[:-1]]
+            # Code value at each boundary, for decoding. Taken from the upper segment, as the
+            # makers' data sheets do (Fujifilm's cut2 is the log segment evaluated at cut1).
+            self._y_bounds = [float(self._enc_seg(self.segments[i + 1], np.array([s["below"]], dtype=np.float64))[0])
+                              for i, s in enumerate(self.segments[:-1])]
 
     # ------------------------------------------------------------ segments
     @staticmethod

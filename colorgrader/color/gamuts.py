@@ -33,9 +33,19 @@ class Gamut:
         return self.to_xyz()[1].astype(F32)
 
 
+def _colour():
+    """Import colour-science without its optional-dependency notices."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        import colour
+    return colour
+
+
 @lru_cache(maxsize=64)
 def _npm(key: tuple) -> np.ndarray:
-    import colour
+    colour = _colour()
 
     prim = np.asarray(key[:6]).reshape(3, 2)
     white = np.asarray(key[6:])
@@ -44,7 +54,7 @@ def _npm(key: tuple) -> np.ndarray:
 
 @lru_cache(maxsize=256)
 def _matrix(src_key: tuple, dst_key: tuple) -> np.ndarray:
-    import colour
+    colour = _colour()
 
     m_src = _npm(src_key)
     m_dst = _npm(dst_key)
