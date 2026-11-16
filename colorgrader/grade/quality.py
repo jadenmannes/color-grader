@@ -44,6 +44,13 @@ def tone_step(idt, shot: dict[str, Any], look: dict[str, Any], odt, cam_sat: flo
     return float(steps[mid].max()) if mid.any() else 0.0
 
 
+def _zero_share(disp: np.ndarray) -> tuple[float, float]:
+    """Share of pixels with one channel at zero: in bright colors, and in other saturated colors."""
+    mx, mn = disp.max(axis=1), disp.min(axis=1)
+    zero = mn <= 0.004
+    return float((zero & (mx >= 0.85)).mean()), float((zero & (mx >= 0.3) & (mx < 0.85)).mean())
+
+
 def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.ndarray | None, shot: dict[str, Any],
                look: dict[str, Any], odt, cam_sat: float, src_clip: dict[str, float] | None, ref_flags: dict[str, Any] | None,
                wb_confidence: float, step: float = 0.0, bit_depth: int = 10, grain_on: bool = False) -> list[dict[str, str]]:
@@ -69,8 +76,24 @@ def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.nda
     # a single channel driven to its limit turns bright colors into flat patches
     top_b, top_g = float((disp_b.max(axis=1) >= 0.995).mean()), float((disp_g.max(axis=1) >= 0.995).mean())
     new_top = top_g - max(top_b, white_g, src_clip.get("high", 0.0) / 100.0)
-    rules.append(_rule("color_clip", "No clipped colors", "fail" if new_top > 0.005 else "pass",
-                       f"{top_g * 100:.2f}% of pixels hold a channel at its limit after the grade, {top_b * 100:.2f}% before."))
+    # the same from the other side: a channel driven to zero inside a bright or saturated color.
+    # The reference sets the allowance here too.
+    (zb_hi, zb_mid), (zg_hi, zg_mid) = _zero_share(disp_b), _zero_share(disp_g)
+    tags, parts = [], []
+    if new_top > 0.005:
+        tags.append("top")
+        parts.append(f"{top_g * 100:.2f}% of pixels hold a channel at its limit after the grade, {top_b * 100:.2f}% before")
+    if zg_hi - max(zb_hi, ref_flags.get("zero_bright", 0.0)) > 0.0015:
+        tags.append("zero_bright")
+        parts.append(f"{zg_hi * 100:.2f}% of pixels are bright colors with one channel driven to zero, {zb_hi * 100:.2f}% before")
+    if zg_mid - max(zb_mid, ref_flags.get("zero_mid", 0.0)) > 0.004:
+        tags.append("zero_mid")
+        parts.append(f"{zg_mid * 100:.2f}% of pixels are saturated colors with one channel driven to zero, {zb_mid * 100:.2f}% before")
+    rule = _rule("color_clip", "No clipped colors", "fail" if tags else "pass",
+                 ("; ".join(parts) + ".") if parts else
+                 f"{top_g * 100:.2f}% of pixels hold a channel at its limit after the grade, {(zg_hi + zg_mid) * 100:.2f}% hold a channel at zero.")
+    rule["tags"] = tags
+    rules.append(rule)
     # 3: skin
     if skin_lin is not None and len(skin_lin) >= 30:
         skin_b = pipeline.shot_stage(skin_lin, shot, cam_sat)

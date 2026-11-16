@@ -148,8 +148,12 @@ def describe(disp_sample: np.ndarray, m: dict[str, Any], di: np.ndarray) -> dict
         if w_ not in seen:
             seen.add(w_)
             uniq.append(w_)
+    # colors the reference itself runs into the edge of the display gamut: bright ones and other saturated ones
+    mx, mn = disp_sample.max(axis=1), disp_sample.min(axis=1)
+    zero = mn <= 0.004
     return {"words": uniq, "text": ", ".join(uniq), "monochrome": mono, "capped": capped,
-            "crushed": crushed / 100.0, "clipped": m["clipping"]["highlights"] / 100.0}
+            "crushed": crushed / 100.0, "clipped": m["clipping"]["highlights"] / 100.0,
+            "zero_bright": float((zero & (mx >= 0.85)).mean()), "zero_mid": float((zero & (mx >= 0.3) & (mx < 0.85)).mean())}
 
 
 def analyze(path: str | Path, odt: OutputTransform) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
@@ -161,5 +165,5 @@ def analyze(path: str | Path, odt: OutputTransform) -> tuple[dict[str, Any], dic
     state = {"path": str(path), "name": Path(path).name, "kind": ref["kind"], "note": ref["note"],
              "width": info["width"], "height": info["height"], "measure": m, "summary": measure_mod.summarize(m),
              "description": desc["text"], "words": desc["words"],
-             "flags": {k: desc[k] for k in ("monochrome", "capped", "crushed", "clipped")}}
+             "flags": {k: desc[k] for k in ("monochrome", "capped", "crushed", "clipped", "zero_bright", "zero_mid")}}
     return state, {"display": ref["display"], "di": ref["di"], "display_sample": ref["display_sample"]}

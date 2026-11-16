@@ -283,7 +283,7 @@ def refine_paired(x0: np.ndarray, footage_frame_di: np.ndarray, ref_frame_di: np
     def resid(x: np.ndarray) -> np.ndarray:
         r = raw(x) * 40.0
         k = 0.6  # Huber: cells that moved in the frame count less
-        r = np.where(np.abs(r) <= k, r, np.sign(r) * np.sqrt(k * (2 * np.abs(r) - k)))
+        r = np.where(np.abs(r) <= k, r, np.sign(r) * np.sqrt(np.maximum(k * (2 * np.abs(r) - k), 0.0)))
         return np.concatenate([r, reg * REG_WEIGHT * (x - x0), 0.03 * REG_WEIGHT * x * (REG_WEIGHT > 1)])
 
     before = float(np.median(np.abs(raw(x0))))

@@ -422,16 +422,28 @@ class Builder:
                 self._note("Look tints eased and the skin correction rebuilt: skin had left the skin tone line.", "skin_tint")
             changed = True
         if "color_clip" in failed:
-            cur = look.get("sat_vs_sat") or []
-            if not cur:
-                look["sat_vs_sat"] = lookfit.saturation_limiter()
-                self._note("Saturation limit added: the look drove bright colors into flat patches.", "limiter")
-            else:
-                ceiling = max(0.16, cur[-1][0] * cur[-1][1] - 0.03)
-                look["sat_vs_sat"] = lookfit.saturation_limiter(max(0.10, ceiling - 0.09), ceiling)
-                look["saturation"] = max(25.0, look["saturation"] - 1.5)
-                self._note("Saturation limit tightened and saturation eased: bright colors clipped.", "limiter")
-            look.setdefault("reasons", {})["sat_vs_sat"] = "Safety limit: bends extreme colors under the display gamut. Normal colors pass untouched."
+            tags = {t for it in failed["color_clip"] for r in reports[it["shot"]["id"]] if r["id"] == "color_clip" for t in r.get("tags", [])}
+            if "zero_bright" in tags:
+                # bright colors left the display gamut: one channel fell to zero. Less color in the highlights brings them back.
+                lvs = look.get("lum_vs_sat") or lookfit.lum_vs_sat_points(1.0, 1.0, 0.0)
+                lo, hi = lvs[0][1], lvs[-1][1]
+                first_h = self._start.setdefault("hi_sat", hi)
+                hi = max(0.35, hi * 0.85)
+                look["lum_vs_sat"] = lookfit.lum_vs_sat_points(lo, hi)
+                look.setdefault("reasons", {})["lum_vs_sat"] = ("Less color in the brightest highlights. Under this look, bright colors ran past "
+                                                                "what the display shows and turned into flat neon patches.")
+                self._note(f"Highlight saturation rolled off from {first_h * 100:.0f}% to {hi * 100:.0f}%: bright colors turned into flat neon patches.", "hi_sat")
+            if "top" in tags or "zero_mid" in tags or not tags:
+                cur = look.get("sat_vs_sat") or []
+                if not cur:
+                    look["sat_vs_sat"] = lookfit.saturation_limiter()
+                    self._note("Saturation limit added: the look drove bright colors into flat patches.", "limiter")
+                else:
+                    ceiling = max(0.16, cur[-1][0] * cur[-1][1] - 0.03)
+                    look["sat_vs_sat"] = lookfit.saturation_limiter(max(0.10, ceiling - 0.09), ceiling)
+                    look["saturation"] = max(25.0, look["saturation"] - 1.5)
+                    self._note("Saturation limit tightened and saturation eased: bright colors clipped.", "limiter")
+                look.setdefault("reasons", {})["sat_vs_sat"] = "Safety limit: bends extreme colors under the display gamut. Normal colors pass untouched."
             changed = True
         if "neutral" in failed:
             for it in failed["neutral"]:

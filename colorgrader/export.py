@@ -166,24 +166,54 @@ def has_filter(name: str) -> bool:
     if name not in _filters:
         r = media.run([media.find_binary("ffmpeg"), "-hide_banner", "-filters"])
         text = r.stdout.decode(errors="replace")
-        for f in ("zscale", "lut3d", "blend", "noise", "gblur"):
+        for f in ("zscale", "lut3d", "blend", "noise", "gblur", "mergeplanes"):
             _filters[f] = bool(re.search(rf"\s{f}\s", text))
     return _filters.get(name, False)
 
 
-_grain_std: dict[float, float] = {}
+_grain_stats: dict[float, tuple[int, float]] = {}
 
 
-def grain_source_std(sigma: float) -> float:
-    """Standard deviation (0..1 scale) of ffmpeg's blurred noise source, measured once per blur size."""
+def _to_float_rgb() -> str:
+    """Filter text that turns integer RGB planes into float RGB without touching the values."""
+    return "zscale=rangein=full:range=full,format=gbrpf32le" if has_filter("zscale") else "format=gbrpf32le"
+
+
+def _grain_chain(w: int, h: int, fps: float, sigma: float, offset: int = 0, seed: int = 7) -> str:
+    """Monochrome film grain source: temporal noise, slightly blurred, the same in all three channels.
+
+    The gray plane goes into the RGB planes with mergeplanes. A direct gray to float RGB
+    conversion gives wrong values in some ffmpeg builds.
+    """
+    lut = f",lut=y=val{offset:+d}" if offset else ""
+    return (f"color=c=gray:s={w}x{h}:r={fps:.6f},format=gray,noise=alls=40:allf=t:all_seed={seed},gblur=sigma={sigma:.3f}{lut},"
+            f"mergeplanes=0x000000:gbrp,{_to_float_rgb()}")
+
+
+def grain_source_stats(sigma: float) -> tuple[int, float]:
+    """Measure ffmpeg's grain source once per blur size.
+
+    Returns the 8-bit offset that centers it on 0.5 and its standard deviation (0..1 scale).
+    Raises ExportError when this ffmpeg build produces an unusable source.
+    """
     key = round(sigma, 3)
-    if key not in _grain_std:
-        r = media.run([media.find_binary("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
-                       f"color=c=gray:s=256x256:r=1,format=gray,noise=alls=40:allf=t,gblur=sigma={sigma:.3f}",
-                       "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray16le", "pipe:1"])
-        arr = np.frombuffer(r.stdout, dtype="<u2").astype(np.float64) / 65535.0
-        _grain_std[key] = float(arr.std()) if arr.size else 0.03
-    return max(_grain_std[key], 1e-4)
+    if key not in _grain_stats:
+        def measure(offset: int) -> tuple[float, float]:
+            r = media.run([media.find_binary("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", _grain_chain(256, 256, 25.0, sigma, offset),
+                           "-frames:v", "4", "-f", "rawvideo", "-pix_fmt", "gbrpf32le", "pipe:1"])
+            arr = np.frombuffer(r.stdout, dtype="<f4").astype(np.float64)
+            if arr.size != 4 * 3 * 256 * 256 or not np.isfinite(arr).all():
+                raise ExportError("This ffmpeg build cannot make the grain layer. Switch grain off for the export.")
+            return float(arr.mean()), float(arr.std())
+
+        mean, std = measure(0)
+        offset = int(round((0.5 - mean) * 255.0))
+        if offset:
+            mean, std = measure(offset)
+        if not (0.45 < mean < 0.55 and 0.004 < std < 0.3):
+            raise ExportError("This ffmpeg build makes an unusable grain layer. Switch grain off for the export.")
+        _grain_stats[key] = (offset, std)
+    return _grain_stats[key]
 
 
 def _resolve_format(fmt: str, info: dict[str, Any]) -> dict[str, Any]:
@@ -264,19 +294,24 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     inputs = ["-i", info["path"]]
     n_in = 1
     if vig:
-        mask = (pipeline.vignette_mask(h, w, float(vig.get("start", 0.45))) * 65535.0 + 0.5).astype(np.uint16)
+        # ffmpeg's subtract blend clamps at zero. grainmerge computes A + (B - 0.5) * opacity with no clamp,
+        # so the mask is stored as 0.5 - mask / 2 and the opacity doubles: A - mask * k.
+        mask = pipeline.vignette_mask(h, w, float(vig.get("start", 0.45)))
+        mask16 = np.round((0.5 - 0.5 * mask) * 65535.0).astype(np.uint16)
         import cv2
 
         mpath = work / "vignette.png"
-        cv2.imwrite(str(mpath), mask)
+        cv2.imwrite(str(mpath), np.repeat(mask16[..., None], 3, axis=2))  # 16-bit RGB: converts to float exactly
         inputs += ["-loop", "1", "-framerate", f"{fps:.6f}", "-i", str(mpath)]
         k = float(vig["amount"]) * W.STOP
-        graph += f";[{n_in}:v]format=gbrpf32le[vm];[{last}][vm]blend=all_mode=subtract:all_opacity={k:.6f}:shortest=1[g1]"
+        graph += (f";[{n_in}:v]format=gbrp16le,{_to_float_rgb()}[vm];"
+                  f"[{last}][vm]blend=all_mode=grainmerge:all_opacity={min(2.0 * k, 1.0):.6f}:shortest=1[g1]")
         last, n_in = "g1", n_in + 1
     if grain:
         sigma = 0.55 * max(0.3, float(grain.get("size", 1.0))) * max(1.0, w / 1920.0)
-        op = (float(grain["amount"]) / 100.0) / grain_source_std(sigma)
-        graph += (f";color=c=gray:s={w}x{h}:r={fps:.6f},format=gray,noise=alls=40:allf=t,gblur=sigma={sigma:.3f},format=gbrpf32le[gr];"
+        offset, std = grain_source_stats(sigma)
+        op = (float(grain["amount"]) / 100.0) / std
+        graph += (f";{_grain_chain(w, h, fps, sigma, offset)}[gr];"
                   f"[{last}][gr]blend=all_mode=grainmerge:all_opacity={min(op, 1.0):.6f}:shortest=1[g2]")
         last = "g2"
     tail = []

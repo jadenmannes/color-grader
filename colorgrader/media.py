@@ -254,7 +254,7 @@ def analysis_pass(info: dict[str, Any], out_dir: Path, analysis_fps: float, anal
     if info["display_height"] > info["display_width"]:
         cw, ch = ch, cw
     fps = info["fps"] or 25.0
-    cut_fps = min(fps, 30.0) if fps > 0 else 25.0
+    cut_fps = min(fps, 120.0) if fps > 0 else 25.0  # every frame: cut times stay frame accurate for the export
     a_path, c_path = out_dir / "analysis.raw", out_dir / "cuts.raw"
     graph = (f"[0:v]split=2[a][b];"
              f"[a]fps={analysis_fps:.6f},{_scale_filter(aw, ah)},format={out_pix_fmt(info)}[oa];"
