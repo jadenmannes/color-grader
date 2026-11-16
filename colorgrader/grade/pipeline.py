@@ -52,7 +52,8 @@ def shot_stage(lin: np.ndarray, shot: dict[str, Any], cam_sat: float = 50.0) -> 
     di = ops.saturation(di, cam_sat)
     m = shot["match"]
     di = ops.contrast(di, m["contrast"], m.get("pivot", model.PIVOT))
-    return ops.saturation(di, m["saturation"])
+    di = ops.saturation(di, m["saturation"])
+    return ops.hsl_curves(di, hue_vs_hue=m.get("hue_vs_hue"), hue_vs_sat=m.get("hue_vs_sat"))
 
 
 def look_stage(di: np.ndarray, look: dict[str, Any]) -> np.ndarray:
@@ -63,7 +64,8 @@ def look_stage(di: np.ndarray, look: dict[str, Any]) -> np.ndarray:
     di = ops.hsl_curves(di, lum_vs_sat=look.get("lum_vs_sat"))
     di = ops.hsl_curves(di, hue_vs_sat=look.get("hue_vs_sat"), hue_vs_hue=look.get("hue_vs_hue"))
     skin = look.get("skin") or {}
-    return ops.hsl_curves(di, hue_vs_sat=skin.get("hue_vs_sat"), hue_vs_hue=skin.get("hue_vs_hue"))
+    di = ops.hsl_curves(di, hue_vs_sat=skin.get("hue_vs_sat"), hue_vs_hue=skin.get("hue_vs_hue"))
+    return ops.hsl_curves(di, sat_vs_sat=look.get("sat_vs_sat"))
 
 
 def vignette_mask(height: int, width: int, start: float) -> np.ndarray:

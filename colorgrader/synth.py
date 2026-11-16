@@ -98,7 +98,7 @@ def record(frames: Iterable[np.ndarray], out_path: str | Path, *, curve: str | d
            bit_depth: int = 10, chroma: str = "422", full_range: bool = True, matrix: str = "bt709", codec: str = "libx265",
            exposure: float = 0.0, wb_gains=(1.0, 1.0, 1.0), flare: float = 0.0, noise: float = 0.0, display_look: dict | None = None,
            tags: dict[str, str] | None = None, color_tags: dict[str, str] | None = None, crf: int = 12, seed: int = 7,
-           max_input_nits: float = 1000.0) -> Path:
+           max_input_nits: float = 10000.0) -> Path:
     """Encode scene-linear Rec.709 frames as a camera would.
 
     display_look: for finished-picture profiles, {"contrast": c, "saturation": s} applied in the

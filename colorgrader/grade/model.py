@@ -26,7 +26,7 @@ def neutral_shot() -> dict[str, Any]:
     """Per-shot correction: balance in linear light, then match trims in log."""
     return {
         "balance": {"gain": [1.0, 1.0, 1.0], "offset": [25.0, 25.0, 25.0]},
-        "match": {"contrast": 1.0, "pivot": PIVOT, "saturation": 50.0},
+        "match": {"contrast": 1.0, "pivot": PIVOT, "saturation": 50.0, "hue_vs_hue": [], "hue_vs_sat": []},
         "reasons": {},
     }
 
@@ -47,6 +47,7 @@ def neutral_look() -> dict[str, Any]:
         "hue_vs_sat": [],   # [[hue degrees, saturation multiplier], ...]
         "hue_vs_hue": [],   # [[hue degrees, rotation in degrees], ...]
         "skin": {"hue_vs_hue": [], "hue_vs_sat": []},
+        "sat_vs_sat": [],   # [[input saturation 0..1, saturation multiplier], ...] limits extreme colors
         "reasons": {},
     }
 
@@ -65,6 +66,8 @@ def quantize_shot(shot: dict[str, Any]) -> dict[str, Any]:
     s["match"]["contrast"] = r(s["match"]["contrast"], "contrast")
     s["match"]["pivot"] = r(s["match"].get("pivot", PIVOT), "pivot")
     s["match"]["saturation"] = r(s["match"]["saturation"], "saturation")
+    s["match"]["hue_vs_hue"] = [[r(a, "curve_in"), r(b, "curve_in")] for a, b in (s["match"].get("hue_vs_hue") or [])]
+    s["match"]["hue_vs_sat"] = [[r(a, "curve_in"), r(b, "curve_value")] for a, b in (s["match"].get("hue_vs_sat") or [])]
     return s
 
 
@@ -82,6 +85,7 @@ def quantize_look(look: dict[str, Any]) -> dict[str, Any]:
     k["lum_vs_sat"] = _q_points(k.get("lum_vs_sat"), "lum_in")
     k["hue_vs_sat"] = _q_points(k.get("hue_vs_sat"), "curve_in")
     k["hue_vs_hue"] = _q_points(k.get("hue_vs_hue"), "curve_in", "curve_in")
+    k["sat_vs_sat"] = _q_points(k.get("sat_vs_sat"), "lum_in")
     skin = k.get("skin") or {}
     k["skin"] = {"hue_vs_hue": _q_points(skin.get("hue_vs_hue"), "curve_in", "curve_in"),
                  "hue_vs_sat": _q_points(skin.get("hue_vs_sat"), "curve_in")}
@@ -100,6 +104,7 @@ def at_strength(look: dict[str, Any], strength: float) -> dict[str, Any]:
     k["lum_vs_sat"] = [[x, 1.0 + a * (v - 1.0)] for x, v in look.get("lum_vs_sat", [])]
     k["hue_vs_sat"] = [[x, 1.0 + a * (v - 1.0)] for x, v in look.get("hue_vs_sat", [])]
     k["hue_vs_hue"] = [[x, a * v] for x, v in look.get("hue_vs_hue", [])]
+    k["sat_vs_sat"] = [[x, 1.0 + a * (v - 1.0)] for x, v in look.get("sat_vs_sat", [])] if a > 0 else []
     skin = look.get("skin") or {}
     k["skin"] = {"hue_vs_hue": [[x, a * v] for x, v in skin.get("hue_vs_hue", [])],
                  "hue_vs_sat": [[x, 1.0 + a * (v - 1.0)] for x, v in skin.get("hue_vs_sat", [])]}
@@ -110,7 +115,7 @@ def is_neutral_look(look: dict[str, Any]) -> bool:
     n = neutral_look()
     keys = ("contrast", "lift", "gamma", "gain", "saturation")
     flat = all(look.get(k) == n[k] for k in keys)
-    curves = all(abs(v - 1.0) < 1e-9 for _, v in look.get("lum_vs_sat", []) + look.get("hue_vs_sat", []))
+    curves = all(abs(v - 1.0) < 1e-9 for _, v in look.get("lum_vs_sat", []) + look.get("hue_vs_sat", []) + look.get("sat_vs_sat", []))
     hue = all(abs(v) < 1e-9 for _, v in look.get("hue_vs_hue", []))
     skin = look.get("skin") or {}
     skin_ok = all(abs(v) < 1e-9 for _, v in skin.get("hue_vs_hue", [])) and all(abs(v - 1.0) < 1e-9 for _, v in skin.get("hue_vs_sat", []))

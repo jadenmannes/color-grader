@@ -329,6 +329,94 @@ def thumb(shot: str) -> Response:
     return Response(pipeline.to_jpeg(img, 82), media_type="image/jpeg", headers={"Cache-Control": "max-age=30"})
 
 
+# --------------------------------------------------------------- reference
+@app.post("/api/reference")
+def set_reference(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return project.get().set_reference(body.get("path") or "")
+    except (media.MediaError, OSError, ValueError) as exc:
+        raise _err(exc)
+
+
+@app.delete("/api/reference")
+def clear_reference() -> dict[str, Any]:
+    project.get().clear_reference()
+    return {"ok": True}
+
+
+@app.get("/api/reference/frame")
+def reference_frame() -> Response:
+    try:
+        return Response(pipeline.to_jpeg(project.get().reference_display()), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    except project.ProjectError as exc:
+        raise _err(exc, 404)
+
+
+@app.get("/api/reference/scope")
+def reference_scope(kind: str = "waveform") -> Response:
+    if kind not in scopes.SCOPES:
+        raise HTTPException(404, "Unknown scope")
+    try:
+        return Response(scopes.render(kind, project.get().reference_display()), media_type="image/png", headers={"Cache-Control": "no-store"})
+    except project.ProjectError as exc:
+        raise _err(exc, 404)
+
+
+# ------------------------------------------------------------------- grade
+@app.post("/api/grade/build")
+def build_grade(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    from .grade import auto
+
+    p = project.get()
+    refit = bool(body.get("refit", True))
+    return {"job": jobs.start("grade", lambda progress: auto.build(p, progress, refit=refit), "Building the grade")}
+
+
+def _recheck() -> dict[str, Any]:
+    from .grade import auto
+
+    p = project.get()
+    if p.state.get("graded"):
+        auto.recheck(p)
+    return p.public_state()
+
+
+@app.put("/api/grade/strength")
+def set_strength(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    project.get().set_strength(float(body.get("strength", 80)))
+    return _recheck() if body.get("recheck", True) else {"ok": True}
+
+
+@app.put("/api/grade/look")
+def set_look(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    project.get().set_look(body.get("look") or {})
+    return _recheck()
+
+
+@app.put("/api/grade/finish")
+def set_finish(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    project.get().set_finish(body.get("finish") or {})
+    return _recheck()
+
+
+@app.put("/api/shots/{shot_id}/grade")
+def set_shot_grade(shot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        project.get().set_shot_grade(shot_id, body.get("grade") or {})
+    except project.ProjectError as exc:
+        raise _err(exc, 404)
+    return _recheck()
+
+
+@app.put("/api/shots/{shot_id}/scene")
+def set_scene(shot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        project.get().set_scene(shot_id, int(body.get("scene", 1)))
+    except (project.ProjectError, ValueError) as exc:
+        raise _err(exc)
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------ static
 @app.get("/")
 def index() -> FileResponse:

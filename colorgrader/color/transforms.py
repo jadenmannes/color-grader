@@ -98,7 +98,7 @@ class OutputTransform:
     """Working space -> display R'G'B'."""
 
     output_space: str = "rec709-gamma24"
-    max_input_nits: float = 1000.0
+    max_input_nits: float = 10000.0
 
     def _curve(self) -> Curve:
         return library.get().curve(W.OUTPUT_SPACES[self.output_space]["curve"])

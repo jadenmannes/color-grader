@@ -39,7 +39,7 @@ export function SettingsPage({ ctx }) {
             <div class="hint">Exports carry Rec.709 tags, so QuickTime, phones and YouTube read them the same way.</div></div>
           <div><label>Highlight range (max input nits of the tone mapping)</label>
             <input type="number" min="200" max="10000" step="100" value=${s.max_input_nits} onChange=${(e) => save({ max_input_nits: parseInt(e.target.value, 10) })} />
-            <div class="hint">1000 keeps 5.8 stops above middle gray. The recipe uses the same number.</div></div>
+            <div class="hint">10000 is Resolve's default for DaVinci Intermediate: highlights roll off and never clip. The recipe uses the same number.</div></div>
           <div><label>Default look strength: ${s.look_strength}%</label>
             <input type="range" min="0" max="100" value=${s.look_strength} onChange=${(e) => save({ look_strength: parseInt(e.target.value, 10) })} /></div>
           <div><label>Analysis frames per second</label>

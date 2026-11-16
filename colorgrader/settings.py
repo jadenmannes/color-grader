@@ -15,7 +15,7 @@ DEFAULTS: dict[str, Any] = {
     "export_format": "h265-10bit-mp4",  # see export.FORMATS
     "output_space": "rec709-gamma24",
     "look_strength": 80,                # percent, default for new looks
-    "max_input_nits": 1000,             # highlight range of the tone mapping
+    "max_input_nits": 10000,            # highlight range of the tone mapping (Resolve's default for DaVinci Intermediate)
     "analysis_fps": 2.0,                # analysis frames per second (minimum 1)
     "preview_width": 1280,
     "export_folder": "",

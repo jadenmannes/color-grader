@@ -231,6 +231,21 @@ class Project:
         say(1.0, "Done")
         return clip
 
+    def stale_clips(self) -> list[str]:
+        """Clips whose shots were measured under another profile or tone mapping setting."""
+        out = []
+        for c in self.state["clips"]:
+            if not c.get("camera_id") or not c.get("profile_id"):
+                continue
+            try:
+                sig = self.profile_signature(c)
+            except ProjectError:
+                continue
+            shots = self.shots_of(c["id"])
+            if shots and any(s.get("signature") != sig or not s.get("measure") for s in shots):
+                out.append(c["id"])
+        return out
+
     def _frame_lin(self, clip: dict[str, Any], buf: np.ndarray, w: int, h: int, idt: InputTransform, prof: dict[str, Any]):
         info = clip["info"]
         sig = media.raw_to_rgb(buf, w, h, info, full_range=idt.full_range)
@@ -291,7 +306,8 @@ class Project:
                 "frames_analyzed": len(frames), "times": [round(float(t), 3) for t in kept_t],
                 "faces": [[[round(float(v), 2) for v in f] for f in fl] for fl in face_list],
                 "has_faces": any(len(fl) > 0 for fl in face_list),
-                "scene": 0, "signature": self.profile_signature(clip), "measure": m, "summary": measure_mod.summarize(m),
+                "scene": 1, "signature": self.profile_signature(clip), "measure": m, "summary": measure_mod.summarize(m),
+                "source_clip": src_clip,
                 "grade": model.neutral_shot(), "data": str(npz)}
 
     def shot_data(self, shot_id: str) -> dict[str, np.ndarray]:
@@ -345,6 +361,85 @@ class Project:
             look = model.at_strength(self.state["look"], self.state["strength"] / 100.0)
         finish = self.state["finish"] if stage == "graded" else None
         return pipeline.render(sig, idt, self.odt(), prof.get("corrections"), shot, look, finish, stage)
+
+    # ---------------------------------------------------------- reference
+    def _ref_file(self) -> Path:
+        d = paths.sub("cache") / "reference"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / f"{self.name}.npz"
+
+    def set_reference(self, path: str) -> dict[str, Any]:
+        from .grade import reference
+
+        state, arrays = reference.analyze(Path(path).expanduser(), self.odt())
+        np.savez(self._ref_file(), **arrays)
+        with self.lock:
+            self._ref_cache = None
+            self.state["reference"] = state
+            self.state["stamp"] = int(self.state.get("stamp", 0)) + 1
+            self.save()
+        return state
+
+    def clear_reference(self) -> None:
+        with self.lock:
+            self._ref_cache = None
+            self.state["reference"] = None
+            self.state["stamp"] = int(self.state.get("stamp", 0)) + 1
+            self.save()
+
+    def reference_arrays(self) -> dict[str, np.ndarray]:
+        if getattr(self, "_ref_cache", None) is None:
+            f = self._ref_file()
+            if not f.exists():
+                raise ProjectError("Reference data is missing. Add the reference again.")
+            with np.load(f) as z:
+                self._ref_cache = {k: z[k] for k in z.files}
+        return self._ref_cache
+
+    def reference_display(self) -> np.ndarray:
+        return self.reference_arrays()["display"]
+
+    # -------------------------------------------------------------- grade
+    def touch(self) -> None:
+        with self.lock:
+            self.state["stamp"] = int(self.state.get("stamp", 0)) + 1
+            self.save()
+
+    def set_strength(self, strength: float) -> None:
+        with self.lock:
+            self.state["strength"] = int(min(100, max(0, round(float(strength)))))
+        self.touch()
+
+    def set_look(self, look: dict[str, Any]) -> None:
+        base = model.neutral_look()
+        base.update({k: v for k, v in look.items() if k in base or k in ("reasons",)})
+        with self.lock:
+            self.state["look"] = model.quantize_look(base) | {"reasons": base.get("reasons", {})}
+        self.touch()
+
+    def set_finish(self, finish: dict[str, Any]) -> None:
+        base = model.neutral_finish()
+        for key in ("vignette", "grain"):
+            base[key].update({k: v for k, v in (finish.get(key) or {}).items() if k in base[key]})
+        with self.lock:
+            self.state["finish"] = base
+        self.touch()
+
+    def set_shot_grade(self, shot_id: str, grade: dict[str, Any]) -> None:
+        with self.lock:
+            s = self.shot(shot_id)
+            g = model.neutral_shot()
+            g["balance"].update({k: v for k, v in (grade.get("balance") or {}).items() if k in g["balance"]})
+            g["match"].update({k: v for k, v in (grade.get("match") or {}).items() if k in g["match"]})
+            g["reasons"] = dict(s.get("grade", {}).get("reasons", {}))
+            s["grade"] = model.quantize_shot(g)
+        self.touch()
+
+    def set_scene(self, shot_id: str, scene: int) -> None:
+        with self.lock:
+            s = self.shot(shot_id)
+            s["scene"], s["scene_locked"] = int(scene), True
+        self.touch()
 
     def shot_at(self, clip_id: str, t: float) -> dict[str, Any] | None:
         for s in self.shots_of(clip_id):
