@@ -35,6 +35,8 @@ S_TL, S_TG, S_TH = 0.010, 0.020, 0.030
 S_SAT, S_LVS = 0.25, 0.40
 X_LO = np.array([-1.33, -1.67, -2.0, -3, -3, -3, -3, -3, -3, -3.2, -1.25, -1.25])
 X_HI = np.array([2.0, 3.33, 2.0, 3, 3, 3, 3, 3, 3, 1.5, 0.0, 0.0])   # shadows and highlights never gain saturation
+# the two saturation-by-luma parameters act on few pixels: a firmer pull to neutral keeps them honest
+REG_WEIGHT = np.array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 6, 6], dtype=np.float64)
 NAMES = ["contrast", "lift", "gamma", "lift tint a", "lift tint b", "gamma tint a", "gamma tint b", "gain tint a", "gain tint b",
          "saturation", "shadow saturation", "highlight saturation"]
 
@@ -238,7 +240,7 @@ def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info
         r.append(60.0 * (f["tints"] - target["tints"]))
         if not mono:
             r.append(1.5 * (np.log(f["sats"]) - np.log(target["sats"])))
-        r.append(reg * x)
+        r.append(reg * REG_WEIGHT * x)
         return np.concatenate([np.atleast_1d(np.asarray(v, dtype=np.float64)) for v in r])
 
     lo, hi = (X_LO.copy(), X_HI.copy()) if same else (B_LO.copy(), B_HI.copy())
@@ -254,6 +256,41 @@ def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info
             "footage": f0, "result": feats(g), "reference": ref, "floor_target": target["floor"],
             "exposure_gap_stops": round(float(d_med) / 0.0733, 2), "midtone_carry": round(carry, 2)}
     return look, info
+
+
+def refine_paired(x0: np.ndarray, footage_frame_di: np.ndarray, ref_frame_di: np.ndarray, ref_display: np.ndarray,
+                  reg: float = 0.01) -> tuple[np.ndarray, dict[str, Any]]:
+    """Sharpen a same-picture fit by comparing the two frames cell by cell.
+
+    Both frames shrink to a coarse grid, so small framing differences average out. Cells where
+    the reference clips carry no information and drop out. The refined values stand only when
+    they explain the reference better than the starting values.
+    """
+    import cv2
+
+    grid = (64, 36)
+    a = cv2.resize(footage_frame_di.astype(F32), grid, interpolation=cv2.INTER_AREA).reshape(-1, 3)
+    b = cv2.resize(ref_frame_di.astype(F32), grid, interpolation=cv2.INTER_AREA).reshape(-1, 3)
+    d = cv2.resize(np.clip(ref_display, 0, 1).astype(F32), grid, interpolation=cv2.INTER_AREA).reshape(-1, 3)
+    keep = (d.min(axis=1) > 0.02) & (d.max(axis=1) < 0.98)
+    if keep.sum() < 200:
+        return x0, {"used": False, "why": "too few usable cells"}
+    a, b = a[keep], b[keep]
+
+    def raw(x: np.ndarray) -> np.ndarray:
+        return (pipeline.look_stage(a, params_to_look(x, final=False)) - b).astype(np.float64).ravel()
+
+    def resid(x: np.ndarray) -> np.ndarray:
+        r = raw(x) * 40.0
+        k = 0.6  # Huber: cells that moved in the frame count less
+        r = np.where(np.abs(r) <= k, r, np.sign(r) * np.sqrt(k * (2 * np.abs(r) - k)))
+        return np.concatenate([r, reg * REG_WEIGHT * (x - x0), 0.03 * REG_WEIGHT * x * (REG_WEIGHT > 1)])
+
+    before = float(np.median(np.abs(raw(x0))))
+    x1, _ = _solve(resid, x0.copy(), X_LO, X_HI, iters=8)
+    after = float(np.median(np.abs(raw(x1))))
+    ok = after < before and after < 0.012
+    return (x1 if ok else x0), {"used": bool(ok), "before": round(before, 5), "after": round(after, 5), "cells": int(keep.sum())}
 
 
 # ------------------------------------------------------------------ palette

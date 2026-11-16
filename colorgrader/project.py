@@ -86,6 +86,7 @@ class Project:
             self.state = self._blank()
             self._frame_cache.clear()
             self._shot_cache.clear()
+            self._ref_cache = None
             self.save()
 
     # ------------------------------------------------------------ lookups
@@ -451,7 +452,10 @@ class Project:
     def public_state(self) -> dict[str, Any]:
         """State for the UI."""
         with self.lock:
-            return json.loads(json.dumps(self.state, default=str))
+            out = json.loads(json.dumps(self.state, default=str))
+        out["applied_look"] = model.at_strength(out["look"], out.get("strength", 80) / 100.0)
+        out["applied_look"]["reasons"] = out["look"].get("reasons", {})
+        return out
 
 
 def _pileup(hist: np.ndarray) -> dict[str, float]:

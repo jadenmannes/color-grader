@@ -29,11 +29,15 @@ class Builder:
         self.lib = library.get()
         self.items: list[dict[str, Any]] = []
         self.fixes: list[str] = []
+        self._fix_lines: dict[str, str] = {}
+        self._start: dict[str, float] = {}
         self.notes: list[str] = []
 
-    def _note(self, text: str) -> None:
-        if text not in self.fixes:
-            self.fixes.append(text)
+    def _note(self, text: str, kind: str | None = None) -> None:
+        """Record a fix. Repeats of one kind replace the earlier line."""
+        key = kind or text
+        self._fix_lines[key] = text
+        self.fixes[:] = list(self._fix_lines.values())
 
     # ---------------------------------------------------------- gather
     def gather(self) -> None:
@@ -173,8 +177,9 @@ class Builder:
             it["skin_info"] = info
             if fix["hue_vs_hue"] or fix["hue_vs_sat"]:
                 it["grade"]["match"]["hue_vs_hue"], it["grade"]["match"]["hue_vs_sat"] = fix["hue_vs_hue"], fix["hue_vs_sat"]
-                it["grade"]["reasons"]["skin"] = (f"Skin sat {info['before_offset']:+.0f} degrees from the skin tone line after balance. "
-                                                  f"This trim moves it to {info.get('after_offset', 0):+.0f} degrees.")
+                side = "yellow-green" if info["before_offset"] > 0 else "red-magenta"
+                it["grade"]["reasons"]["skin"] = (f"Skin sat {abs(info['before_offset']):.0f} degrees toward {side} after balance. "
+                                                  f"This trim moves it to {abs(info.get('after_offset', 0)):.0f} degrees from the skin tone line.")
                 count += 1
             else:
                 it["grade"]["reasons"].pop("skin", None)
@@ -196,14 +201,29 @@ class Builder:
         ref_di = ref_arrays["di"]
         ref_feat = lookfit.features(ref_di)
         flags = dict(ref_state.get("flags") or {})
-        # same picture as one of the shots: the reference's exposure belongs to the grade
-        best = 0.0
-        for it in self.items:
-            for fr in it["data"]["frames"][:2]:
+        # same picture as one of the shots: the reference is this shot, graded. Fit on this shot alone.
+        best, best_i, best_f = 0.0, -1, 0
+        for i, it in enumerate(self.items):
+            for j, fr in enumerate(it["data"]["frames"]):
                 disp = self.odt(pipeline.shot_stage(fr.astype(F32), it["grade"], it["cam_sat"]))
-                best = max(best, reference.content_similarity(ref_arrays["display"], disp))
+                sim = reference.content_similarity(ref_arrays["display"], disp)
+                if sim > best:
+                    best, best_i, best_f = sim, i, j
         flags["same_content"] = best >= 0.85
+        if flags["same_content"]:
+            parts = [self._di(self.items[best_i])[::2].astype(F32)]
+            self.same_shot = self.items[best_i]["shot"]["id"]
         look, info = lookfit.fit(parts, ref_feat, flags)
+        if flags["same_content"]:
+            it = self.items[best_i]
+            frame = pipeline.shot_stage(it["data"]["frames"][best_f].astype(F32), it["grade"], it["cam_sat"])
+            ref_frame = self.odt.inverse(ref_arrays["display"])
+            x1, paired = lookfit.refine_paired(np.array(info["x"]), frame, ref_frame, ref_arrays["display"])
+            info["paired"] = paired
+            if paired.get("used"):
+                info["x"] = [round(float(v), 4) for v in x1]
+                info["at_limit"] = [lookfit.NAMES[i] for i in range(10) if x1[i] <= lookfit.X_LO[i] + 1e-3 or x1[i] >= lookfit.X_HI[i] - 1e-3]
+                look = lookfit.params_to_look(x1)
         graded = pipeline.look_stage(footage, model.quantize_look(look))
         skin_hue = None
         sk = self.pooled_skin()
@@ -221,7 +241,7 @@ class Builder:
         look["description"] = ref_state.get("description", "")
         look["reasons"] = self._look_reasons(look, info, ref_feat, pal_notes, flags)
         self._suitability(info, flags, footage, ref_di, best)
-        self.fit_info = {k: v for k, v in info.items() if k in ("x", "cost", "at_limit", "exposure_gap_stops", "midtone_carry")}
+        self.fit_info = {k: v for k, v in info.items() if k in ("x", "cost", "at_limit", "exposure_gap_stops", "midtone_carry", "mode", "paired")}
         self.fit_info["same_content"] = flags["same_content"]
         return look
 
@@ -241,9 +261,17 @@ class Builder:
 
         lw, lm = tint_word(look["lift"], 0.0)
         level = float(np.mean(look["lift"]))
-        floor_pct = float(self.odt(np.full((1, 3), ref_feat["floor"], dtype=F32))[0, 1]) * 100
-        r["lift"] = (f"Reference blacks sit at {floor_pct:.0f}%: {'lifted' if level > 0.004 else 'deeper' if level < -0.004 else 'level'} blacks"
-                     + (f", shadows lean {lw}." if lm > 0.003 else ", shadows stay neutral."))
+        to_pct = lambda v: float(self.odt(np.full((1, 3), v, dtype=F32))[0, 1]) * 100
+        ref_floor, own_floor = to_pct(ref_feat["floor"]), to_pct(f0["floor"])
+        if level > 0.004 and ref_floor > own_floor + 0.5:
+            black = f"Reference blacks sit at {ref_floor:.0f}% against {own_floor:.0f}% in your footage: blacks lifted"
+        elif level < -0.004:
+            black = f"Reference blacks sit deeper than your footage ({ref_floor:.0f}% against {own_floor:.0f}%): blacks set lower"
+        elif abs(level) > 0.004:
+            black = "Shadow level trimmed to hold your midtones under the new contrast"
+        else:
+            black = "Black level stays"
+        r["lift"] = black + (f", shadows lean {lw}." if lm > 0.003 else ", shadows stay neutral.")
         gw, gm = tint_word(look["gamma"], 0.0)
         r["gamma"] = ("Midtones lean " + gw + " in the reference." if gm > 0.004 else "Midtone curve shaped to the reference's tone distribution.")
         hw, hm = tint_word(look["gain"], 1.0)
@@ -299,10 +327,10 @@ class Builder:
         if info.get("present"):
             if fix["hue_vs_hue"] or fix["hue_vs_sat"]:
                 look.setdefault("reasons", {})["skin"] = (
-                    f"The look moved skin to {info['look_offset']:+.0f} degrees from the skin tone line. "
-                    f"This correction returns it to {info.get('after_offset', 0):+.0f} degrees.")
+                    f"The look moved skin {abs(info['look_offset'] - info['before_offset']):.0f} degrees on the vectorscope. "
+                    f"This correction returns it to {abs(info.get('after_offset', 0)):.0f} degrees from the skin tone line.")
             else:
-                look.setdefault("reasons", {})["skin"] = f"Skin sits {info['look_offset']:+.0f} degrees from the skin tone line. No correction needed."
+                look.setdefault("reasons", {})["skin"] = f"Skin sits {abs(info['look_offset']):.0f} degrees from the skin tone line under the look. No correction needed."
         return look
 
     # --------------------------------------------------------- quality
@@ -337,22 +365,24 @@ class Builder:
         if "highlights" in failed:
             hit = failed["highlights"]
             if len(hit) * 2 >= n and (look["contrast"] > 1.02 or max(look["gain"]) > 1.005):
-                old = look["contrast"]
+                first = self._start.setdefault("contrast_hi", look["contrast"])
                 look["contrast"] = 1.0 + (look["contrast"] - 1.0) * 0.88
                 look["gain"] = [1.0 + (g - 1.0) * 0.85 for g in look["gain"]]
-                self._note(f"Look contrast lowered from {old:.2f} to {look['contrast']:.2f}: it clipped highlights in {len(hit)} shots.")
+                self._note(f"Look contrast lowered from {first:.2f} to {look['contrast']:.2f}: it clipped highlights.", "contrast_hi")
             else:
                 for it in hit:
                     it["trim"] -= 0.12
                     it["trim_reason"] = "Exposure eased to keep highlights below clipping under the look."
                     self._balance(it)
-                self._note(f"Exposure eased by 0.12 stops in {len(hit)} shot(s) to keep highlights below clipping.")
+                self._note("Exposure eased in single shots to keep highlights below clipping under the look.", "expo_hi")
             changed = True
         if "shadows" in failed:
-            old = float(np.mean(look["lift"]))
-            look["lift"] = [v + 0.004 for v in look["lift"]]
-            look["contrast"] = 1.0 + (look["contrast"] - 1.0) * 0.95
-            self._note(f"Blacks raised (lift {old:+.3f} to {old + 0.004:+.3f}) and contrast eased: the look crushed shadows in {len(failed['shadows'])} shot(s).")
+            first = self._start.setdefault("lift", float(np.mean(look["lift"])))
+            first_c = self._start.setdefault("contrast_lo", look["contrast"])
+            look["lift"] = [v + 0.006 for v in look["lift"]]
+            look["contrast"] = 1.0 + (look["contrast"] - 1.0) * 0.92
+            self._note(f"Blacks raised (lift {first:+.3f} to {float(np.mean(look['lift'])):+.3f}) and contrast eased "
+                       f"({first_c:.2f} to {look['contrast']:.2f}): the look crushed shadows.", "shadows")
             changed = True
         if "saturation" in failed:
             details = " ".join(r["detail"] for it in failed["saturation"] for r in reports[it["shot"]["id"]] if r["id"] == "saturation")
@@ -362,11 +392,17 @@ class Builder:
                 lo = max(0.3, lo * 0.8)
             if "bright highlights" in details:
                 hi = max(0.3, hi * 0.82)
-            look["lum_vs_sat"] = lookfit.lum_vs_sat_points(lo, hi)
+            if lo < 0.99 or hi < 0.99:
+                look["lum_vs_sat"] = lookfit.lum_vs_sat_points(lo, hi)
+                look.setdefault("reasons", {})["lum_vs_sat"] = "Less color in deep shadows and bright highlights keeps saturation under control."
+                self._note("Saturation rolled off in deep shadows and bright highlights to keep color under control.", "saturation")
             if "peak saturation" in details:
-                look["saturation"] = max(25.0, look["saturation"] - 3.0)
-            look.setdefault("reasons", {})["lum_vs_sat"] = "Less color in deep shadows and bright highlights keeps saturation under control."
-            self._note("Saturation rolled off in deep shadows and bright highlights to keep color under control.")
+                first_s = self._start.setdefault("saturation", look["saturation"])
+                look["saturation"] = 50.0 + (look["saturation"] - 50.0) * 0.75 if look["saturation"] > 52.0 else max(25.0, look["saturation"] - 2.0)
+                if not look.get("sat_vs_sat"):
+                    look["sat_vs_sat"] = lookfit.saturation_limiter()
+                    look.setdefault("reasons", {})["sat_vs_sat"] = "Safety limit: bends extreme colors under the display gamut. Normal colors pass untouched."
+                self._note(f"Saturation eased from {first_s:.0f} to {look['saturation']:.0f} with a limit on extreme colors: peak saturation ran past the scope.", "peak")
             changed = True
         if "skin" in failed:
             hit = failed["skin"]
@@ -376,25 +412,25 @@ class Builder:
                     it["skin_tight"] = True
                 self.skin_trims(only=tight, keep=2.0)
                 self.apply_skin(look)
-                self._note(f"Skin trim tightened in {len(tight)} shot(s): skin sat off the skin tone line under the look.")
+                self._note("Skin trim tightened in single shots: skin sat off the skin tone line under the look.", "skin_trim")
             else:
                 for key in ("lift", "gamma"):  # keep the level, ease the color part
                     mean = float(np.mean(look[key]))
                     look[key] = [mean + (v - mean) * 0.8 for v in look[key]]
                 look["gain"] = [1.0 + (v - 1.0) * 0.8 for v in look["gain"]]
                 self.apply_skin(look)
-                self._note("Look tints eased by 20% and the skin correction rebuilt: skin had left the skin tone line.")
+                self._note("Look tints eased and the skin correction rebuilt: skin had left the skin tone line.", "skin_tint")
             changed = True
         if "color_clip" in failed:
             cur = look.get("sat_vs_sat") or []
             if not cur:
                 look["sat_vs_sat"] = lookfit.saturation_limiter()
-                self._note("Saturation limit added: the look drove bright colors into flat patches.")
+                self._note("Saturation limit added: the look drove bright colors into flat patches.", "limiter")
             else:
                 ceiling = max(0.16, cur[-1][0] * cur[-1][1] - 0.03)
                 look["sat_vs_sat"] = lookfit.saturation_limiter(max(0.10, ceiling - 0.09), ceiling)
                 look["saturation"] = max(25.0, look["saturation"] - 1.5)
-                self._note(f"Saturation limit tightened and saturation eased: bright colors clipped in {len(failed['color_clip'])} shot(s).")
+                self._note("Saturation limit tightened and saturation eased: bright colors clipped.", "limiter")
             look.setdefault("reasons", {})["sat_vs_sat"] = "Safety limit: bends extreme colors under the display gamut. Normal colors pass untouched."
             changed = True
         if "neutral" in failed:
@@ -404,11 +440,11 @@ class Builder:
                 base = it["cast"] if it["cast"] is not None else (it["wb"]["dr"], it["wb"]["db"])
                 it["cast"] = (base[0] + wb["dr"], base[1] + wb["db"])
                 self._balance(it)
-            self._note(f"White balance refined in {len(failed['neutral'])} shot(s): a cast remained on neutral objects.")
+            self._note("White balance refined in single shots: a cast remained on neutral objects.", "neutral")
             changed = True
         if "banding" in failed and not (finish.get("grain") or {}).get("enabled"):
             finish.setdefault("grain", {}).update({"enabled": True, "amount": 0.25, "size": 1.0})
-            self._note("Fine grain switched on: the grade stretches an 8-bit source far enough to risk banding in skies and walls.")
+            self._note("Fine grain switched on: the grade stretches the source far enough to risk banding in skies and walls.", "banding")
             changed = True
         return changed
 
@@ -473,16 +509,22 @@ def build(proj, progress: Callable[[float, str], None] | None = None, refit: boo
     strength = float(st.get("strength", 80)) / 100.0
     b.say(0.8, "Checking the quality rules")
     reports = b.check(look, strength, finish)
-    count = lambda rep: sum(r["status"] == "fail" for rules in rep.values() for r in rules)
-    stale = 0
-    for _ in range(8):
-        before = count(reports)
-        if before == 0 or not b.fix(look, reports, finish):
+    look_rules = {"highlights", "shadows", "saturation", "color_clip"}
+    still = lambda rep: any(r["status"] == "fail" and r["id"] in look_rules for rules in rep.values() for r in rules)
+    for _ in range(6):   # targeted fixes first
+        if not b.fix(look, reports, finish):
             break
         reports = b.check(look, strength, finish)
-        stale = stale + 1 if count(reports) >= before else 0
-        if stale >= 2:
-            break
+    eased = 1.0
+    while still(reports) and eased > 0.2:   # then ease the whole look until every rule holds
+        eased *= 0.85
+        keep = {k: look.get(k) for k in ("name", "description", "source", "reasons")}
+        look = model.at_strength(look, 0.85) | keep
+        b.apply_skin(look)
+        reports = b.check(look, strength, finish)
+    if eased < 1.0:
+        b._note(f"The whole look eased to {eased * 100:.0f}% of its first strength: the quality rules still failed after the single fixes. "
+                "This is the closest believable version.", "eased")
     scene_rules = b.scene_consistency(model.at_strength(look, strength))
     with proj.lock:
         for it in b.items:

@@ -137,3 +137,5 @@ p { margin: 0 0 8px; line-height: 1.45; }
 table.plain { border-collapse: collapse; width: 100%; font-size: 12px; }
 table.plain td, table.plain th { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
 table.plain th { color: var(--dim); font-weight: 500; }
+
+.refthumb { width: 100%; max-height: 120px; object-fit: contain; background: #0c0c0c; border-radius: 4px; display: block; }

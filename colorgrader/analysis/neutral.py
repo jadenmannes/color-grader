@@ -115,7 +115,7 @@ def estimate_cast(lin: np.ndarray, ypos: np.ndarray | None, odt, skin_lin: np.nd
         s709 = np.maximum(apply_matrix(corrected(np.median(skin_lin, axis=0).astype(np.float64)), to709), 1e-5)
         theta = np.degrees(np.arctan2(np.log2(s709[..., 2] / s709[..., 1]), np.log2(s709[..., 0] / s709[..., 1])))
         err = (theta - SKIN_DIRECTION + 180.0) % 360.0 - 180.0
-        cost += 0.6 * (np.maximum(np.abs(err) - 10.0, 0.0) / 12.0) ** 2
+        cost += 0.9 * (np.maximum(np.abs(err) - 10.0, 0.0) / 12.0) ** 2
         info["skin"] = {"samples": int(len(skin_lin))}
 
     # 3. sky and foliage must keep a natural hue
@@ -143,7 +143,7 @@ def estimate_cast(lin: np.ndarray, ypos: np.ndarray | None, odt, skin_lin: np.nd
     conf_neutral = float(np.clip((share - 0.01) / 0.08, 0.0, 1.0))
     conf = conf_neutral
     if info["skin"]:
-        conf = max(conf, 0.6)
+        conf = max(conf, 0.7)
     if info["sky"] or info["foliage"]:
         conf = max(conf, 0.35)
     t = (dr_hat - db_hat) / np.sqrt(2.0)

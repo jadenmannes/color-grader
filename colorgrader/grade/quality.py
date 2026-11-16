@@ -37,7 +37,11 @@ def tone_step(idt, shot: dict[str, Any], look: dict[str, Any], odt, cam_sat: flo
     lin = pipeline.camera_stage(sig, idt, corrections)
     disp = odt(pipeline.look_stage(pipeline.shot_stage(lin, shot, cam_sat), look))
     y = disp @ np.array([0.2126, 0.7152, 0.0722], dtype=F32)
-    return float(np.max(np.abs(np.diff(y))) * 255.0)
+    steps = np.abs(np.diff(y)) * 255.0
+    # Skies and walls live between the deep shadows and the last highlight roll-off.
+    # The first step above black is always large on a gamma display, and noise hides it.
+    mid = (y[:-1] > 0.12) & (y[:-1] < 0.97)
+    return float(steps[mid].max()) if mid.any() else 0.0
 
 
 def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.ndarray | None, shot: dict[str, Any],
@@ -53,8 +57,11 @@ def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.nda
     # 1 and 2: clipped highlights, crushed shadows
     white_b, white_g = float((disp_b.min(axis=1) >= 0.995).mean()), float((disp_g.min(axis=1) >= 0.995).mean())
     black_b, black_g = float((disp_b.max(axis=1) <= 0.004).mean()), float((disp_g.max(axis=1) <= 0.004).mean())
-    allow_hi = max(white_b, src_clip.get("high", 0.0) / 100.0) + 0.004 + (ref_flags.get("clipped", 0.0) if ref_flags.get("clipped", 0.0) >= 0.015 else 0.0)
-    allow_lo = max(black_b, src_clip.get("low", 0.0) / 100.0) + 0.004 + (ref_flags.get("crushed", 0.0) if ref_flags.get("crushed", 0.0) >= 0.02 else 0.0)
+    # the reference sets the allowance: a grade never clips or crushes more than its reference does
+    # Tolerance: half a percent of the frame at white, one percent at black. A black point that
+    # touches zero in the darkest corners is a set black point, never a crushed shadow.
+    allow_hi = max(white_b, src_clip.get("high", 0.0) / 100.0, ref_flags.get("clipped", 0.0)) + 0.005
+    allow_lo = max(black_b, src_clip.get("low", 0.0) / 100.0, ref_flags.get("crushed", 0.0)) + 0.010
     rules.append(_rule("highlights", "No new clipped highlights", "fail" if white_g > allow_hi else "pass",
                        f"{white_g * 100:.2f}% of pixels at white after the grade, {max(white_b, src_clip.get('high', 0.0) / 100.0) * 100:.2f}% before."))
     rules.append(_rule("shadows", "No new crushed shadows", "fail" if black_g > allow_lo else "pass",
@@ -112,7 +119,7 @@ def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.nda
     rules.append(_rule("saturation", "Saturation controlled", "fail" if bad else "pass",
                        "; ".join(bad) + "." if bad else f"Midtones {mid_sat:.0f}%, deep shadows {deep_sat:.0f}%, bright highlights {bright_sat:.0f}%, peak {peak:.0f}%."))
     # 6: banding risk
-    limit_warn, limit_fail = (2.5, 4.0)
+    limit_warn, limit_fail = (1.5, 2.5) if bit_depth <= 8 else (2.5, 4.0)
     if step > limit_fail and not grain_on:
         rules.append(_rule("banding", "Smooth gradients", "fail", f"One {bit_depth}-bit source step becomes {step:.1f} display steps. Skies and walls risk banding."))
     elif step > limit_warn:
