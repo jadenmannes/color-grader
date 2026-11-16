@@ -247,14 +247,20 @@ def _to_float_rgb() -> str:
     return "zscale=rangein=full:range=full,format=gbrpf32le" if has_filter("zscale") else "format=gbrpf32le"
 
 
-def _grain_chain(w: int, h: int, fps: float, sigma: float, offset: int = 0, seed: int = 7) -> str:
+GRAIN_FRAMES = 17
+
+
+def _grain_chain(w: int, h: int, fps: float, sigma: float, offset: int = 0, seed: int = 7, loop: bool = False) -> str:
     """Monochrome film grain source: temporal noise, slightly blurred, the same in all three channels.
 
     The gray plane goes into the RGB planes with mergeplanes. A direct gray to float RGB
     conversion gives wrong values in some ffmpeg builds.
     """
     lut = f",lut=y=val{offset:+d}" if offset else ""
-    return (f"color=c=gray:s={w}x{h}:r={fps:.6f},format=gray,noise=alls=40:allf=t:all_seed={seed},gblur=sigma={sigma:.3f}{lut},"
+    # The noise generator is slow at 4K. A short run of grain frames repeats instead: with fine grain
+    # nobody sees a pattern that returns every GRAIN_FRAMES frames.
+    cycle = f",trim=end_frame={GRAIN_FRAMES},loop=loop=-1:size={GRAIN_FRAMES}:start=0,setpts=N/({fps:.6f}*TB)" if loop else ""
+    return (f"color=c=gray:s={w}x{h}:r={fps:.6f},format=gray,noise=alls=40:allf=t:all_seed={seed},gblur=sigma={sigma:.3f}{lut}{cycle},"
             f"mergeplanes=0x000000:gbrp,{_to_float_rgb()}")
 
 
@@ -374,16 +380,17 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
 
         mpath = work / "vignette.png"
         cv2.imwrite(str(mpath), np.repeat(mask16[..., None], 3, axis=2))  # 16-bit RGB: converts to float exactly
-        inputs += ["-loop", "1", "-framerate", f"{fps:.6f}", "-i", str(mpath)]
+        inputs += ["-i", str(mpath)]
         k = float(vig["amount"]) * W.STOP
-        graph += (f";[{n_in}:v]format=gbrp16le,{_to_float_rgb()}[vm];"
+        # the mask decodes and converts once, then the loop filter repeats this one frame
+        graph += (f";[{n_in}:v]format=gbrp16le,{_to_float_rgb()},loop=loop=-1:size=1:start=0,setpts=N/({fps:.6f}*TB)[vm];"
                   f"[{last}][vm]blend=all_mode=grainmerge:all_opacity={min(2.0 * k, 1.0):.6f}:shortest=1[g1]")
         last, n_in = "g1", n_in + 1
     if grain:
         sigma = 0.55 * max(0.3, float(grain.get("size", 1.0))) * max(1.0, w / 1920.0)
         offset, std = grain_source_stats(sigma)
         op = (float(grain["amount"]) / 100.0) / std
-        graph += (f";{_grain_chain(w, h, fps, sigma, offset)}[gr];"
+        graph += (f";{_grain_chain(w, h, fps, sigma, offset, loop=True)}[gr];"
                   f"[{last}][gr]blend=all_mode=grainmerge:all_opacity={min(op, 1.0):.6f}:shortest=1[g2]")
         last = "g2"
     tail = []
@@ -399,6 +406,8 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     graph += f";[{last}]{','.join(tail)}[out]"
     cmd = [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", *inputs, "-filter_complex", graph, "-map", "[out]"]
     codec = list(f["codec"])
+    if f.get("x265") and w * h > 2560 * 1440:   # above 1440p the medium preset crawls: one step faster, same quality target
+        codec[codec.index("-preset") + 1] = "fast"
     if preview:
         codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
     cmd += codec + ["-pix_fmt", f["pix"], "-color_primaries", "bt709", "-color_trc", trc, "-colorspace", "bt709", "-color_range", "tv"]

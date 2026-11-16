@@ -218,6 +218,35 @@ def test_quality_rules_catch_a_harsh_look():
     assert quality.subtlety(model.quantize_look(gentle))["status"] == "pass"
 
 
+def test_rules_blame_a_look_only_for_what_it_adds():
+    """Footage with colors at the edge of the display gamut passes under no look. A look that pushes more colors over fails."""
+    rng = np.random.default_rng(4)
+    lib = library.get()
+    base = rng.uniform(0.05, 0.6, (6000, 1)).astype(np.float32) * np.ones(3, dtype=np.float32)
+    neon = base.copy()
+    neon[:900] = rng.uniform(0.2, 0.5, (900, 1)).astype(np.float32) * np.array([0.02, 1.0, 0.03], dtype=np.float32)   # laser green, outside Rec.709
+    lin = apply_matrix(neon, conversion_matrix(lib.gamut("rec2020"), lib.gamut(W.WORKING_GAMUT)))
+    ypos = np.linspace(0, 1, len(lin), dtype=np.float32)
+    shot = model.neutral_shot()
+    none = {r["id"]: r for r in quality.check_shot(lin, ypos, None, shot, model.neutral_look(), ODT, 50.0, None, None, 0.0)}
+    assert none["color_clip"]["status"] == "pass" and "footage itself" in none["color_clip"]["detail"]
+    assert none["saturation"]["status"] in ("pass", "warn")
+    # an ordinary scene, then a look that drives its warm highlights out of gamut
+    warm = base.copy()
+    warm[:900] = rng.uniform(2.0, 6.0, (900, 1)).astype(np.float32) * np.array([1.0, 0.8, 0.35], dtype=np.float32)
+    lin = apply_matrix(warm, conversion_matrix(lib.gamut("rec709"), lib.gamut(W.WORKING_GAMUT)))
+    push = model.neutral_look()
+    push.update(contrast=1.35, gain=[1.06, 1.0, 0.9], saturation=60.0)
+    calm = {r["id"]: r for r in quality.check_shot(lin, ypos, None, shot, model.neutral_look(), ODT, 50.0, None, None, 0.0)}
+    hot = {r["id"]: r for r in quality.check_shot(lin, ypos, None, shot, model.quantize_look(push), ODT, 50.0, None, None, 0.0)}
+    assert calm["color_clip"]["status"] == "pass"
+    assert hot["color_clip"]["status"] == "fail" and "zero_bright" in hot["color_clip"]["tags"]
+    # a reference that shows the same neon colors allows them
+    allowed = {r["id"]: r for r in quality.check_shot(lin, ypos, None, shot, model.quantize_look(push), ODT, 50.0, None,
+                                                       {"zero_bright": 0.5, "zero_mid": 0.5}, 0.0)}
+    assert "zero_bright" not in allowed["color_clip"]["tags"]
+
+
 def test_build_repairs_a_look_that_breaks_the_rules(proj, workdir):
     scene = synth.procedural_scene(640, 360, skin=False)
     clip = load_clip(proj, flog2_clip(workdir / "repair.mov", scenes=[scene], frames_each=25, size=(640, 360)))

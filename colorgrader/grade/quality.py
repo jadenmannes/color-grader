@@ -51,6 +51,15 @@ def _zero_share(disp: np.ndarray) -> tuple[float, float]:
     return float((zero & (mx >= 0.85)).mean()), float((zero & (mx >= 0.3) & (mx < 0.85)).mean())
 
 
+def _new_zero_share(before: np.ndarray, after: np.ndarray) -> tuple[float, float, float, float]:
+    """Pixels whose channel reached zero under the look (bright, other saturated), plus the totals after the look."""
+    mx, mn = after.max(axis=1), after.min(axis=1)
+    zero = mn <= 0.004
+    fresh = zero & (before.min(axis=1) > 0.004)
+    bright, mid = mx >= 0.85, (mx >= 0.3) & (mx < 0.85)
+    return float((fresh & bright).mean()), float((fresh & mid).mean()), float((zero & bright).mean()), float((zero & mid).mean())
+
+
 def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.ndarray | None, shot: dict[str, Any],
                look: dict[str, Any], odt, cam_sat: float, src_clip: dict[str, float] | None, ref_flags: dict[str, Any] | None,
                wb_confidence: float, step: float = 0.0, bit_depth: int = 10, grain_on: bool = False) -> list[dict[str, str]]:
@@ -77,21 +86,23 @@ def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.nda
     top_b, top_g = float((disp_b.max(axis=1) >= 0.995).mean()), float((disp_g.max(axis=1) >= 0.995).mean())
     new_top = top_g - max(top_b, white_g, src_clip.get("high", 0.0) / 100.0)
     # the same from the other side: a channel driven to zero inside a bright or saturated color.
-    # The reference sets the allowance here too.
-    (zb_hi, zb_mid), (zg_hi, zg_mid) = _zero_share(disp_b), _zero_share(disp_g)
+    # Counted pixel by pixel: only colors whose channel reached zero under the look, never colors
+    # the footage already held at the gamut edge. The reference sets the allowance here too.
+    hi_new, mid_new, zg_hi, zg_mid = _new_zero_share(disp_b, disp_g)
     tags, parts = [], []
     if new_top > 0.005:
         tags.append("top")
         parts.append(f"{top_g * 100:.2f}% of pixels hold a channel at its limit after the grade, {top_b * 100:.2f}% before")
-    if zg_hi - max(zb_hi, ref_flags.get("zero_bright", 0.0)) > 0.0015:
+    if hi_new - ref_flags.get("zero_bright", 0.0) > 0.0015:
         tags.append("zero_bright")
-        parts.append(f"{zg_hi * 100:.2f}% of pixels are bright colors with one channel driven to zero, {zb_hi * 100:.2f}% before")
-    if zg_mid - max(zb_mid, ref_flags.get("zero_mid", 0.0)) > 0.004:
+        parts.append(f"the look drove one channel to zero in {hi_new * 100:.2f}% of pixels, all bright colors")
+    if mid_new - ref_flags.get("zero_mid", 0.0) > 0.004:
         tags.append("zero_mid")
-        parts.append(f"{zg_mid * 100:.2f}% of pixels are saturated colors with one channel driven to zero, {zb_mid * 100:.2f}% before")
+        parts.append(f"the look drove one channel to zero in {mid_new * 100:.2f}% of pixels, all saturated colors")
     rule = _rule("color_clip", "No clipped colors", "fail" if tags else "pass",
                  ("; ".join(parts) + ".") if parts else
-                 f"{top_g * 100:.2f}% of pixels hold a channel at its limit after the grade, {(zg_hi + zg_mid) * 100:.2f}% hold a channel at zero.")
+                 f"{top_g * 100:.2f}% of pixels hold a channel at its limit after the grade, {(zg_hi + zg_mid) * 100:.2f}% hold a channel at zero."
+                 + (" The footage itself holds these colors at the edge of what the display shows." if zg_hi + zg_mid > 0.01 else ""))
     rule["tags"] = tags
     rules.append(rule)
     # 3: skin
@@ -132,15 +143,21 @@ def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.nda
     deep_sat = float(sat[deep].mean()) if deep.sum() > 50 else 0.0
     bright_sat = float(sat[bright].mean()) if bright.sum() > 50 else 0.0
     peak = float(np.percentile(sat, 99.5))
-    bad = []
+    _, cb_b, cr_b = rgb_to_ycbcr(disp_b)
+    peak_b = float(np.percentile(np.hypot(cb_b, cr_b) * 200.0, 99.5))   # the same footage before the look
+    bad, inherited = [], ""
     if deep_sat > max(9.0, 1.3 * mid_sat):
         bad.append(f"deep shadows carry {deep_sat:.0f}% against {mid_sat:.0f}% in the midtones")
     if bright_sat > max(16.0, 1.5 * mid_sat):
         bad.append(f"bright highlights carry {bright_sat:.0f}% against {mid_sat:.0f}% in the midtones")
     if peak > 85.0:
-        bad.append(f"peak saturation reaches {peak:.0f}% of the scope")
-    rules.append(_rule("saturation", "Saturation controlled", "fail" if bad else "pass",
-                       "; ".join(bad) + "." if bad else f"Midtones {mid_sat:.0f}%, deep shadows {deep_sat:.0f}%, bright highlights {bright_sat:.0f}%, peak {peak:.0f}%."))
+        if peak > peak_b + 2.0:
+            bad.append(f"peak saturation reaches {peak:.0f}% of the scope, {peak_b:.0f}% before the look")
+        else:   # the footage itself runs past the scope: the look adds nothing to it
+            inherited = f" Peak saturation sits at {peak:.0f}% of the scope. The footage holds these colors itself ({peak_b:.0f}% before the look)."
+    rules.append(_rule("saturation", "Saturation controlled", "fail" if bad else ("warn" if inherited else "pass"),
+                       ("; ".join(bad) + "." if bad else f"Midtones {mid_sat:.0f}%, deep shadows {deep_sat:.0f}%, bright highlights {bright_sat:.0f}%, peak {peak:.0f}%.")
+                       + inherited))
     # 6: banding risk
     limit_warn, limit_fail = (1.5, 2.5) if bit_depth <= 8 else (2.5, 4.0)
     if step > limit_fail and not grain_on:

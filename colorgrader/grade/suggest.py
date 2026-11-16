@@ -223,6 +223,9 @@ def suggest(proj, progress: Callable[[float, str], None] | None = None, count: i
     finish = copy.deepcopy(proj.state.get("finish") or model.neutral_finish())
     strength = float(proj.state.get("strength", 80)) / 100.0
     snap = b.snapshot()
+    # failures the footage shows under no look at all: a look answers only for what it adds
+    base_reports = b.check(model.neutral_look(), strength, finish)
+    base_fail = {(sid, r["id"]) for sid, rules in base_reports.items() for r in rules if r["status"] == "fail"}
     lead = _preview_shot(b)
     t_mid = lead["times"][len(lead["times"]) // 2] if lead.get("times") else 0.5 * (lead["start"] + lead["end"])
     chosen: list[dict[str, Any]] = []
@@ -237,7 +240,7 @@ def suggest(proj, progress: Callable[[float, str], None] | None = None, count: i
         look, _ = fit_template(tpl, parts, skin)
         look = b.apply_skin(look)
         look, reports = auto.enforce_rules(b, look, finish, 1.0 if tpl.get("mono") else strength)
-        failed = sum(r["status"] == "fail" for rules in reports.values() for r in rules)
+        failed = {(sid, r["id"]) for sid, rules in reports.items() for r in rules if r["status"] == "fail"} - base_fail
         fixes = list(b.fixes)
         b.restore(snap)
         if failed:     # this look breaks the footage even after the fixes: next candidate
