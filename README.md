@@ -4,15 +4,17 @@ Color Grader analyzes your footage and a reference, builds a grade the way a col
 
 ## Install and start
 
-Windows:
+Windows (PowerShell or the Command Prompt, from the project folder):
 
 ```bat
-install.bat
+.\install.bat
 ```
 
 ```bat
-start.bat
+.\start.bat
 ```
+
+The `.\` matters in PowerShell: it runs scripts from the current folder only when you point at it. Double-clicking the files in Explorer works too.
 
 macOS and Linux:
 
