@@ -12,7 +12,7 @@ DEFAULTS: dict[str, Any] = {
     "resolve_edition": "free",          # free | studio
     "lut_size": 33,                     # 17 | 33 | 65
     "lut_format": "cube",
-    "export_format": "h265-10bit-mp4",  # see export.FORMATS
+    "export_format": "auto",            # see export.FORMATS
     "output_space": "rec709-gamma24",
     "look_strength": 80,                # percent, default for new looks
     "max_input_nits": 10000,            # highlight range of the tone mapping (Resolve's default for DaVinci Intermediate)

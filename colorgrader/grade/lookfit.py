@@ -194,7 +194,8 @@ B_HI = np.array([1.5, 2.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 0.9, 0.0, 0.0])
 
 
 def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info: dict[str, Any] | None = None,
-        reg: float = 0.03) -> tuple[dict[str, Any], dict[str, Any]]:
+        reg: float = 0.03, carry_override: dict[str, float] | None = None,
+        limits: tuple[np.ndarray, np.ndarray] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Find the look that gives the footage the reference's statistics.
 
     footage_di: balanced footage, one sample (N, 3) per shot. ref: features() of the reference.
@@ -219,7 +220,7 @@ def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info
     # Exposure stays the footage's own. A reference whose midtones sit close to the footage
     # passes its midtone level on. A night scene on a day shot passes on nothing.
     carry = 1.0 if same else CARRY["median"] * float(np.clip(1.0 - (abs(d_med) - MID_NEAR) / (MID_FAR - MID_NEAR), 0.0, 1.0))
-    k = {key: 1.0 for key in CARRY} if same else CARRY
+    k = {key: 1.0 for key in CARRY} if same else (carry_override or CARRY)   # designed targets (look suggestions) carry in full
     target = {
         "spread": f0["spread"] * (ref["spread"] / np.maximum(f0["spread"], 1e-4)) ** k["spread"],
         "floor": f0["floor"] + (k["floor_up"] if ref["floor"] >= f0["floor"] else k["floor_down"]) * (ref["floor"] - f0["floor"]),
@@ -244,6 +245,8 @@ def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info
         return np.concatenate([np.atleast_1d(np.asarray(v, dtype=np.float64)) for v in r])
 
     lo, hi = (X_LO.copy(), X_HI.copy()) if same else (B_LO.copy(), B_HI.copy())
+    if limits is not None:
+        lo, hi = np.asarray(limits[0], dtype=np.float64).copy(), np.asarray(limits[1], dtype=np.float64).copy()
     if mono:
         lo[9], hi[9] = -1e-6, 1e-6
     x, cost = _solve(resid, np.zeros(12), lo, hi)

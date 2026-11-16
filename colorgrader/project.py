@@ -151,6 +151,7 @@ class Project:
         with self.lock:
             self.state["clips"] = [c for c in self.state["clips"] if c["id"] != clip_id]
             self.state["shots"] = [s for s in self.state["shots"] if s["clip_id"] != clip_id]
+            self.state["suggestions"] = []   # suggested looks belong to the footage they were made for
             self.save()
         shutil.rmtree(paths.sub("cache") / clip_id, ignore_errors=True)
 
@@ -225,6 +226,8 @@ class Project:
                 if s["id"] in old and abs(old[s["id"]]["start"] - s["start"]) < 1e-3 and abs(old[s["id"]]["end"] - s["end"]) < 1e-3:
                     s["grade"] = old[s["id"]].get("grade", s["grade"])
                     s["scene"] = old[s["id"]].get("scene", s["scene"])
+            if [(s["id"], s["start"], s["end"]) for s in new_shots] != [(s["id"], s["start"], s["end"]) for s in old.values()]:
+                self.state["suggestions"] = []   # new footage: earlier suggestions no longer describe it
             self.state["shots"] = [s for s in self.state["shots"] if s["clip_id"] != clip_id] + new_shots
             clip["analysis"] = meta
             clip["error"] = None

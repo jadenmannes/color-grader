@@ -25,7 +25,7 @@ from .grade import pipeline
 app = FastAPI(title="Color Grader", version=__version__)
 
 _previews: dict[str, dict[str, Any]] = {}
-FEATURE_SUGGESTIONS = False
+FEATURE_SUGGESTIONS = True
 
 
 def _err(exc: Exception, code: int = 400) -> HTTPException:
@@ -368,9 +368,20 @@ def reference_scope(kind: str = "waveform") -> Response:
 def build_grade(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     from .grade import auto
 
+    from .grade import model, suggest
+
     p = project.get()
     refit = bool(body.get("refit", True))
-    return {"job": jobs.start("grade", lambda progress: auto.build(p, progress, refit=refit), "Building the grade")}
+
+    def work(progress):
+        report = auto.build(p, lambda f, m: progress(0.6 * f, m), refit=refit)
+        # no reference and no look yet: propose three looks for this footage
+        if not p.state.get("reference") and model.is_neutral_look(p.state["look"]) and not p.state.get("suggestions"):
+            suggest.suggest(p, lambda f, m: progress(0.6 + 0.4 * f, m))
+        progress(1.0, "Grade ready")
+        return report
+
+    return {"job": jobs.start("grade", work, "Building the grade")}
 
 
 def _recheck() -> dict[str, Any]:
@@ -603,6 +614,39 @@ def apply_look(look_id: str) -> dict[str, Any]:
     if not p.state["shots"]:
         return {"job": None, "project": p.public_state()}
     return {"job": jobs.start("grade", lambda progress: auto.build(p, progress, refit=False), "Applying the saved look")}
+
+
+# ------------------------------------------------------- suggested looks
+@app.post("/api/suggestions")
+def make_suggestions() -> dict[str, Any]:
+    from .grade import suggest
+
+    p = project.get()
+    if not p.state["shots"]:
+        raise _err(ValueError("Analyze at least one clip first."))
+    return {"job": jobs.start("suggest", lambda progress: {"count": len(suggest.suggest(p, progress))}, "Finding looks for your footage")}
+
+
+@app.get("/api/suggestions/{sid}/thumb.jpg")
+def suggestion_thumb(sid: str) -> FileResponse:
+    from .grade import suggest
+
+    f = suggest.thumb_path(sid)
+    if not f.exists():
+        raise HTTPException(404, "No preview")
+    return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/suggestions/{sid}/apply")
+def apply_suggestion(sid: str) -> dict[str, Any]:
+    from .grade import auto, suggest
+
+    p = project.get()
+    try:
+        suggest.apply(p, sid)
+    except KeyError as exc:
+        raise _err(ValueError(str(exc).strip("'\"")), 404)
+    return {"job": jobs.start("grade", lambda progress: auto.build(p, progress, refit=False), "Applying the look")}
 
 
 # ------------------------------------------------------------------ static

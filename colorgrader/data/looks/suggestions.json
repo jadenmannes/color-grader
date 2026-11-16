@@ -1,0 +1,395 @@
+{
+  "schema": 1,
+  "about": [
+    "Look templates for footage with no reference. Each template says what the look does to a picture:",
+    "contrast: ratio of the tonal spread. floor: black level in DaVinci Intermediate (null keeps the footage's own).",
+    "tints: [hue in degrees, amount] added to near-neutral tones per zone. Hue: red 0, yellow 60, green 120, cyan 180, blue 240, magenta 300.",
+    "saturation: color level against the balanced footage (1.0 keeps it). rolloff: saturation left in deep shadows and bright highlights.",
+    "hue_vs_sat, hue_vs_hue: optional palette points [hue, value]. mono: true removes all color.",
+    "base and suits: the score. base plus weight times trait, each trait runs 0..1:",
+    "skin, sky, foliage, daylight, low_key, high_key, flat, contrasty, colorful, muted, warm, cool."
+  ],
+  "templates": [
+    {
+      "id": "clean-natural",
+      "name": "Clean natural",
+      "family": "natural",
+      "mood": "True colors with gentle contrast. A polished version of what the camera saw.",
+      "contrast": 1.08,
+      "floor": null,
+      "tints": {
+        "shadows": [
+          0,
+          0.0
+        ],
+        "midtones": [
+          0,
+          0.0
+        ],
+        "highlights": [
+          0,
+          0.0
+        ]
+      },
+      "saturation": 1.05,
+      "base": 0.55,
+      "suits": {
+        "skin": 0.1,
+        "colorful": 0.1,
+        "daylight": 0.05
+      },
+      "rolloff": {
+        "shadows": 0.9,
+        "highlights": 0.92
+      }
+    },
+    {
+      "id": "warm-film",
+      "name": "Warm film",
+      "family": "warm",
+      "mood": "Soft warm highlights, gentle green-teal shadows, color pulled back a touch. Feels like a film print.",
+      "contrast": 1.08,
+      "floor": 0.04,
+      "tints": {
+        "shadows": [
+          170,
+          0.009
+        ],
+        "midtones": [
+          40,
+          0.007
+        ],
+        "highlights": [
+          45,
+          0.016
+        ]
+      },
+      "saturation": 0.9,
+      "base": 0.4,
+      "suits": {
+        "skin": 0.25,
+        "foliage": 0.1,
+        "daylight": 0.1,
+        "low_key": -0.2
+      },
+      "rolloff": {
+        "shadows": 0.85,
+        "highlights": 0.88
+      }
+    },
+    {
+      "id": "teal-orange",
+      "name": "Teal and orange",
+      "family": "contrast",
+      "mood": "Cool teal shadows against warm skin and highlights. The modern cinema look.",
+      "contrast": 1.12,
+      "floor": 0.015,
+      "tints": {
+        "shadows": [
+          195,
+          0.018
+        ],
+        "midtones": [
+          30,
+          0.004
+        ],
+        "highlights": [
+          35,
+          0.014
+        ]
+      },
+      "saturation": 1.03,
+      "hue_vs_sat": [
+        [
+          120,
+          0.86
+        ],
+        [
+          240,
+          0.94
+        ]
+      ],
+      "hue_vs_hue": [
+        [
+          240,
+          -5.0
+        ]
+      ],
+      "base": 0.3,
+      "suits": {
+        "skin": 0.35,
+        "sky": 0.1,
+        "cool": 0.1,
+        "foliage": -0.2,
+        "muted": -0.1
+      },
+      "rolloff": {
+        "shadows": 0.88,
+        "highlights": 0.88
+      }
+    },
+    {
+      "id": "golden-hour",
+      "name": "Golden hour",
+      "family": "warm",
+      "mood": "Sun-warm midtones and highlights with rich color. Late afternoon light.",
+      "contrast": 1.06,
+      "floor": null,
+      "tints": {
+        "shadows": [
+          30,
+          0.005
+        ],
+        "midtones": [
+          45,
+          0.014
+        ],
+        "highlights": [
+          50,
+          0.022
+        ]
+      },
+      "saturation": 1.08,
+      "base": 0.3,
+      "suits": {
+        "sky": 0.2,
+        "foliage": 0.2,
+        "warm": 0.2,
+        "skin": 0.1,
+        "daylight": 0.1,
+        "low_key": -0.35
+      },
+      "rolloff": {
+        "shadows": 0.88,
+        "highlights": 0.92
+      }
+    },
+    {
+      "id": "moonlight",
+      "name": "Moonlight",
+      "family": "cool",
+      "mood": "Cool blue shadows, deep blacks, restrained color. Quiet and nocturnal.",
+      "contrast": 1.1,
+      "floor": 0.012,
+      "tints": {
+        "shadows": [
+          235,
+          0.018
+        ],
+        "midtones": [
+          220,
+          0.012
+        ],
+        "highlights": [
+          210,
+          0.007
+        ]
+      },
+      "saturation": 0.82,
+      "base": 0.25,
+      "suits": {
+        "low_key": 0.7,
+        "cool": 0.15,
+        "muted": 0.1,
+        "high_key": -0.3,
+        "foliage": -0.1,
+        "warm": -0.1,
+        "daylight": -0.15
+      },
+      "rolloff": {
+        "shadows": 0.82,
+        "highlights": 0.88
+      }
+    },
+    {
+      "id": "soft-matte",
+      "name": "Soft matte",
+      "family": "faded",
+      "mood": "Lifted blacks, low contrast, pastel color. Calm and editorial.",
+      "contrast": 0.9,
+      "floor": 0.075,
+      "tints": {
+        "shadows": [
+          220,
+          0.009
+        ],
+        "midtones": [
+          0,
+          0.0
+        ],
+        "highlights": [
+          50,
+          0.007
+        ]
+      },
+      "saturation": 0.82,
+      "base": 0.3,
+      "suits": {
+        "high_key": 0.25,
+        "skin": 0.15,
+        "contrasty": 0.1,
+        "low_key": -0.25,
+        "flat": -0.15
+      },
+      "rolloff": {
+        "shadows": 0.9,
+        "highlights": 0.92
+      }
+    },
+    {
+      "id": "vivid-travel",
+      "name": "Vivid travel",
+      "family": "vivid",
+      "mood": "Deep sky, lively greens, crisp contrast. Postcard color.",
+      "contrast": 1.15,
+      "floor": 0.02,
+      "tints": {
+        "shadows": [
+          0,
+          0.0
+        ],
+        "midtones": [
+          0,
+          0.0
+        ],
+        "highlights": [
+          0,
+          0.0
+        ]
+      },
+      "saturation": 1.2,
+      "hue_vs_sat": [
+        [
+          240,
+          1.06
+        ],
+        [
+          120,
+          1.04
+        ]
+      ],
+      "base": 0.28,
+      "suits": {
+        "sky": 0.3,
+        "foliage": 0.25,
+        "muted": 0.15,
+        "flat": 0.1,
+        "daylight": 0.1,
+        "skin": -0.25,
+        "low_key": -0.25
+      },
+      "rolloff": {
+        "shadows": 0.85,
+        "highlights": 0.85
+      }
+    },
+    {
+      "id": "bleach-bypass",
+      "name": "Bleach bypass",
+      "family": "contrast",
+      "mood": "Hard contrast, drained color, steel highlights. Gritty and tense.",
+      "contrast": 1.24,
+      "floor": 0.01,
+      "tints": {
+        "shadows": [
+          0,
+          0.0
+        ],
+        "midtones": [
+          0,
+          0.0
+        ],
+        "highlights": [
+          215,
+          0.006
+        ]
+      },
+      "saturation": 0.66,
+      "base": 0.22,
+      "suits": {
+        "flat": 0.15,
+        "low_key": 0.1,
+        "cool": 0.1,
+        "muted": 0.1,
+        "skin": -0.1,
+        "foliage": -0.1,
+        "contrasty": -0.2
+      },
+      "rolloff": {
+        "shadows": 0.85,
+        "highlights": 0.88
+      }
+    },
+    {
+      "id": "cool-clean",
+      "name": "Cool clean",
+      "family": "cool",
+      "mood": "Crisp whites with a cool edge. Modern and precise.",
+      "contrast": 1.08,
+      "floor": 0.018,
+      "tints": {
+        "shadows": [
+          225,
+          0.01
+        ],
+        "midtones": [
+          215,
+          0.004
+        ],
+        "highlights": [
+          215,
+          0.009
+        ]
+      },
+      "saturation": 0.94,
+      "base": 0.28,
+      "suits": {
+        "high_key": 0.2,
+        "sky": 0.1,
+        "cool": 0.15,
+        "skin": -0.15,
+        "warm": -0.15,
+        "foliage": -0.1
+      },
+      "rolloff": {
+        "shadows": 0.88,
+        "highlights": 0.9
+      }
+    },
+    {
+      "id": "classic-mono",
+      "name": "Classic black and white",
+      "family": "mono",
+      "mood": "Full tonal range in monochrome. Shape and light carry the picture.",
+      "contrast": 1.15,
+      "floor": 0.012,
+      "mono": true,
+      "tints": {
+        "shadows": [
+          0,
+          0.0
+        ],
+        "midtones": [
+          0,
+          0.0
+        ],
+        "highlights": [
+          0,
+          0.0
+        ]
+      },
+      "saturation": 1.0,
+      "base": 0.3,
+      "suits": {
+        "contrasty": 0.15,
+        "muted": 0.2,
+        "low_key": 0.05,
+        "colorful": -0.25
+      },
+      "rolloff": {
+        "shadows": 1.0,
+        "highlights": 1.0
+      }
+    }
+  ]
+}

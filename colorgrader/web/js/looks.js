@@ -19,12 +19,13 @@ export function SuggestedLooks({ ctx, onLive }) {
       <p class="dim">${proj.reference ? 'Your reference drives the look. Suggestions offer three alternatives.' : 'No reference loaded. The app proposes three looks for this footage.'}</p>
       <button onClick=${suggest}>Suggest three looks</button></div>`}
     ${list.length > 0 && html`<div>
-      <div class="looks">${list.map((s) => html`
-        <div class=${'look-card' + (current === s.name ? ' on' : '')} title=${s.why || ''} onClick=${() => apply(s)}>
+      ${list.map((s) => html`
+        <div class=${'look-row' + (current === s.name ? ' on' : '')} onClick=${() => apply(s)}>
           <img src=${`/api/suggestions/${s.id}/thumb.jpg?v=${s.stamp || 0}`} loading="lazy" />
-          <div class="lc-body"><div class="lc-name">${s.name}</div><div class="lc-mood">${s.mood}</div></div>
-        </div>`)}</div>
-      <div class="row" style="margin-top:6px"><span class="dim" style="flex:1">Click a look to apply it. Each one keeps your exposure and passes the quality rules.</span>
+          <div class="lr-body"><div class="lr-name">${s.name}${current === s.name ? html` <span class="badge ok">applied</span>` : ''}</div>
+            <div class="lr-mood">${s.mood}</div><div class="lr-why">${s.why}</div></div>
+        </div>`)}
+      <div class="row" style="margin-top:6px"><span class="dim" style="flex:1">Click a look to apply it. Each one keeps your exposure and passes the quality rules on this footage.</span>
         <button class="small ghost" onClick=${suggest}>Suggest again</button></div>
     </div>`}
   </div>`;

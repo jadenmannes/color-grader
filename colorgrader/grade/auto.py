@@ -33,6 +33,19 @@ class Builder:
         self._start: dict[str, float] = {}
         self.notes: list[str] = []
 
+    def snapshot(self) -> list[dict[str, Any]]:
+        """The per-shot state a rule fix may change. restore() puts it back (look suggestions try several looks)."""
+        keys = ("grade", "trim", "cast", "trim_reason", "skin_tight", "skin_info")
+        return [{k: copy.deepcopy(it[k]) for k in keys if k in it} for it in self.items]
+
+    def restore(self, snap: list[dict[str, Any]]) -> None:
+        keys = ("grade", "trim", "cast", "trim_reason", "skin_tight", "skin_info")
+        for it, saved in zip(self.items, snap):
+            for k in keys:
+                it.pop(k, None)
+            it.update(copy.deepcopy(saved))
+        self.fixes, self._fix_lines, self._start, self.notes = [], {}, {}, []
+
     def _note(self, text: str, kind: str | None = None) -> None:
         """Record a fix. Repeats of one kind replace the earlier line."""
         key = kind or text
@@ -493,6 +506,41 @@ class Builder:
         return out
 
 
+def enforce_rules(b: Builder, look: dict[str, Any], finish: dict[str, Any], strength: float) -> tuple[dict[str, Any], dict[str, list]]:
+    """Check the quality rules and repair the look until they hold: targeted fixes first, then easing."""
+    reports = b.check(look, strength, finish)
+    look_rules = {"highlights", "shadows", "saturation", "color_clip"}
+    still = lambda rep: any(r["status"] == "fail" and r["id"] in look_rules for rules in rep.values() for r in rules)
+    for _ in range(6):   # targeted fixes first
+        if not b.fix(look, reports, finish):
+            break
+        reports = b.check(look, strength, finish)
+    eased = 1.0
+    while still(reports) and eased > 0.2:   # then ease the whole look until every rule holds
+        eased *= 0.85
+        keep = {k: look.get(k) for k in ("name", "description", "source", "reasons", "mood", "family")}
+        look = model.at_strength(look, 0.85) | {k: v for k, v in keep.items() if v is not None}
+        b.apply_skin(look)
+        reports = b.check(look, strength, finish)
+    if eased < 1.0:
+        b._note(f"The whole look eased to {eased * 100:.0f}% of its first strength: the quality rules still failed after the single fixes. "
+                "This is the closest believable version.", "eased")
+    return look, reports
+
+
+def prepared_builder(proj, progress: Callable[[float, str], None] | None = None) -> Builder:
+    """A builder with balance, scenes, camera match and skin trims done: the state every look starts from."""
+    b = Builder(proj, progress)
+    b.gather()
+    if not b.items:
+        raise RuntimeError("Analyze at least one clip first.")
+    b.balance_all()
+    b.scenes()
+    b.camera_match()
+    b.skin_trims()
+    return b
+
+
 def build(proj, progress: Callable[[float, str], None] | None = None, refit: bool = True) -> dict[str, Any]:
     """Run the full grade for the project and store it in the project state."""
     stale = proj.stale_clips()
@@ -520,23 +568,7 @@ def build(proj, progress: Callable[[float, str], None] | None = None, refit: boo
     finish = copy.deepcopy(st.get("finish") or model.neutral_finish())
     strength = float(st.get("strength", 80)) / 100.0
     b.say(0.8, "Checking the quality rules")
-    reports = b.check(look, strength, finish)
-    look_rules = {"highlights", "shadows", "saturation", "color_clip"}
-    still = lambda rep: any(r["status"] == "fail" and r["id"] in look_rules for rules in rep.values() for r in rules)
-    for _ in range(6):   # targeted fixes first
-        if not b.fix(look, reports, finish):
-            break
-        reports = b.check(look, strength, finish)
-    eased = 1.0
-    while still(reports) and eased > 0.2:   # then ease the whole look until every rule holds
-        eased *= 0.85
-        keep = {k: look.get(k) for k in ("name", "description", "source", "reasons")}
-        look = model.at_strength(look, 0.85) | keep
-        b.apply_skin(look)
-        reports = b.check(look, strength, finish)
-    if eased < 1.0:
-        b._note(f"The whole look eased to {eased * 100:.0f}% of its first strength: the quality rules still failed after the single fixes. "
-                "This is the closest believable version.", "eased")
+    look, reports = enforce_rules(b, look, finish, strength)
     scene_rules = b.scene_consistency(model.at_strength(look, strength))
     with proj.lock:
         for it in b.items:
