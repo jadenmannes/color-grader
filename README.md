@@ -56,7 +56,7 @@ Every step uses standard grading controls with Resolve's own math. The values in
 
 ### Matching a reference
 
-The app describes the reference in plain words and fits the shared look to its statistics: tonal spread, black level, color of shadows, midtones and highlights, saturation by tonal range, and palette. Your exposure stays your own: a night reference on a daytime shot keeps the daytime brightness. When a reference asks for more than your footage carries, the app says why and builds the closest believable version. No pixel-by-pixel color transfer happens anywhere.
+The app describes the reference in plain words and fits the shared look to its statistics: tonal spread, black level, color of shadows, midtones and highlights, saturation by tonal range, and palette. Brightness and color level follow the reference too. The Reference brightness slider on the Grade tab sets how far: 100 percent takes on the reference's midtone level (1.25 stops at most), 0 percent keeps your own exposure. When a reference asks for more than your footage carries, the app says why and builds the closest believable version. No pixel-by-pixel color transfer happens anywhere.
 
 ### Looks with no reference
 

@@ -226,7 +226,7 @@ class Builder:
         if flags["same_content"]:
             parts = [self._di(self.items[best_i])[::2].astype(F32)]
             self.same_shot = self.items[best_i]["shot"]["id"]
-        look, info = lookfit.fit(parts, ref_feat, flags)
+        look, info = lookfit.fit(parts, ref_feat, flags, brightness=float(self.p.state.get("brightness", 100)) / 100.0)
         if flags["same_content"]:
             it = self.items[best_i]
             frame = pipeline.shot_stage(it["data"]["frames"][best_f].astype(F32), it["grade"], it["cam_sat"])
@@ -314,11 +314,14 @@ class Builder:
         gap = info["exposure_gap_stops"]
         if flags.get("same_content"):
             self.notes.append("The reference shows the same picture as one of your shots. Exposure follows the reference as well.")
-        elif abs(gap) >= 1.2:
-            self.notes.append(f"The reference sits {abs(gap):.1f} stops {'darker' if gap < 0 else 'brighter'} than your footage. "
-                              "Your exposure stays. The grade copies contrast and color only.")
-        elif abs(gap) >= 0.35:
-            self.notes.append(f"The reference sits {abs(gap):.1f} stops {'darker' if gap < 0 else 'brighter'}. The grade carries {info['midtone_carry'] * 100:.0f}% of this difference.")
+        elif abs(gap) >= 0.25:
+            way = "darker" if gap < 0 else "brighter"
+            moved = abs(gap) * info["midtone_carry"]
+            if moved < 0.05:
+                self.notes.append(f"The reference sits {abs(gap):.1f} stops {way} than your footage. Reference brightness is off: your exposure stays.")
+            else:
+                self.notes.append(f"The reference sits {abs(gap):.1f} stops {way} than your footage. The grade moves your midtones {moved:.1f} stops toward it. "
+                                  "The Reference brightness slider sets how far.")
         if info["at_limit"]:
             self.notes.append("The reference asks for more than a believable grade of this footage carries. These controls stop at their limit: "
                               + ", ".join(info["at_limit"]) + ". This is the closest believable version.")
@@ -515,6 +518,22 @@ def enforce_rules(b: Builder, look: dict[str, Any], finish: dict[str, Any], stre
         if not b.fix(look, reports, finish):
             break
         reports = b.check(look, strength, finish)
+    for _ in range(8):   # then ease only the controls behind the rules that still fail: brightness and the rest of the look stay
+        bad = {r["id"] for rules in reports.values() for r in rules if r["status"] == "fail" and r["id"] in look_rules}
+        if not bad:
+            break
+        if bad & {"shadows", "highlights"}:
+            look["contrast"] = 1.0 + (look["contrast"] - 1.0) * 0.85
+        if "shadows" in bad:
+            look["lift"] = [v + 0.004 for v in look["lift"]]
+        if "highlights" in bad:
+            look["gain"] = [1.0 + (g - 1.0) * 0.85 for g in look["gain"]]
+            look["gamma"] = [g - 0.15 * max(float(np.mean(look["gamma"])), 0.0) for g in look["gamma"]]
+        if bad & {"saturation", "color_clip"}:
+            look["saturation"] = 50.0 + (look["saturation"] - 50.0) * 0.85 if look["saturation"] > 50.5 else look["saturation"] - 1.0
+        b.apply_skin(look)
+        reports = b.check(look, strength, finish)
+        b._note("Single controls eased until the quality rules held: " + ", ".join(sorted(bad)).replace("color_clip", "clipped colors") + ".", "part_ease")
     eased = 1.0
     while still(reports) and eased > 0.2:   # then ease the whole look until every rule holds
         eased *= 0.85

@@ -94,6 +94,11 @@ function GradeTab({ ctx, shot, onLive }) {
   const timer = useRef(null);
   useEffect(() => { setStrength(proj.strength); }, [proj.strength]);
   const build = () => runJob(() => api.post('/api/grade/build', {}), 'Building the grade');
+  const [bright, setBright] = useState(proj.brightness === undefined ? 100 : proj.brightness);
+  useEffect(() => { setBright(proj.brightness === undefined ? 100 : proj.brightness); }, [proj.brightness]);
+  const changeBright = async (v) => {
+    try { await api.put('/api/grade/brightness', { brightness: v }); const done = await build(); if (done) { await refresh(); onLive(); } } catch (e) { notify(e.message); }
+  };
   const changeStrength = (v) => {
     setStrength(v);
     clearTimeout(timer.current);
@@ -124,6 +129,12 @@ function GradeTab({ ctx, shot, onLive }) {
           <span class="dim">${rep.scenes} scene${rep.scenes === 1 ? '' : 's'}</span></div>
         ${(rep.notes || []).map((n) => html`<div class="notice" style="margin:8px 0 0">${n}</div>`)}
         ${(rep.fixes || []).length ? html`<h3>Fixed during the build</h3><ul style="margin:0;padding-left:18px">${rep.fixes.map((f) => html`<li>${f}</li>`)}</ul>` : ''}
+      </div>`}
+      ${proj.reference && html`<div>
+        <h3>Reference brightness: ${bright}%</h3>
+        <input type="range" min="0" max="100" step="5" value=${bright} onInput=${(e) => setBright(parseInt(e.target.value, 10))}
+          onChange=${(e) => changeBright(parseInt(e.target.value, 10))} />
+        <div class="dim">100%: your footage takes on the brightness of the reference. 0%: your own exposure stays and the grade copies contrast and color only. Release the slider to rebuild.</div>
       </div>`}
       <${LooksPanel} ctx=${ctx} onLive=${onLive} />
       ${proj.graded && html`

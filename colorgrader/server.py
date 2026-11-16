@@ -399,6 +399,12 @@ def set_strength(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     return _recheck() if body.get("recheck", True) else {"ok": True}
 
 
+@app.put("/api/grade/brightness")
+def set_brightness(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    project.get().set_brightness(float(body.get("brightness", 100)))
+    return {"ok": True}
+
+
 @app.put("/api/grade/look")
 def set_look(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     project.get().set_look(body.get("look") or {})

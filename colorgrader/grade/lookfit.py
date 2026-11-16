@@ -27,7 +27,8 @@ ZONES = ((0.02, 0.25), (0.35, 0.65), (0.78, 0.98))
 ZONE_NAMES = ("shadows", "midtones", "highlights")
 SIGMA = 0.035       # chroma width of "near neutral", DaVinci Intermediate units
 SECTORS = 12
-MID_NEAR, MID_FAR = 0.025, 0.09   # midtone distance (DaVinci Intermediate): about 0.34 and 1.2 stops
+STOP_DI = 0.0733                   # one stop in DaVinci Intermediate
+MID_CARRY, MID_MAX_STOPS = 0.9, 1.25   # share of the reference's midtone level the grade takes on, and the largest move
 
 # parameter scales: x = 1 is a clear but ordinary move
 S_CONTRAST, S_LIFT, S_GAMMA = 0.30, 0.03, 0.06
@@ -187,16 +188,18 @@ def _solve(resid, x0: np.ndarray, lo: np.ndarray, hi: np.ndarray, iters: int = 1
 
 # How far the footage statistics move toward the reference when the two pictures differ.
 # Each number reflects how much of a statistic belongs to the grade and how much to the scene.
-CARRY = {"spread": 0.5, "floor_up": 0.85, "floor_down": 0.4, "tints": 0.8, "sats": 0.5, "median": 0.7}
+CARRY = {"spread": 0.7, "floor_up": 0.85, "floor_down": 0.4, "tints": 0.8, "sats": 0.85, "median": 0.7}
 # limits for different-content references, in fit units (contrast 0.82..1.45, lift -0.02..0.06, gamma +-0.06 ...)
-B_LO = np.array([-0.6, -0.67, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -1.3, -1.25, -1.25])
-B_HI = np.array([1.5, 2.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 0.9, 0.0, 0.0])
+B_LO = np.array([-0.6, -0.67, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -1.3, -1.25, -1.25])
+B_HI = np.array([1.5, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 1.6, 0.0, 0.0])
 
 
 def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info: dict[str, Any] | None = None,
         reg: float = 0.03, carry_override: dict[str, float] | None = None,
-        limits: tuple[np.ndarray, np.ndarray] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+        limits: tuple[np.ndarray, np.ndarray] | None = None, brightness: float = 1.0) -> tuple[dict[str, Any], dict[str, Any]]:
     """Find the look that gives the footage the reference's statistics.
+
+    brightness: 0..1, how far the midtone level follows the reference (1 = follow, 0 = keep the footage's own).
 
     footage_di: balanced footage, one sample (N, 3) per shot. ref: features() of the reference.
     ref_info: {"capped": bool, "monochrome": bool, "same_content": bool}.
@@ -217,9 +220,10 @@ def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info
     same = bool(ref_info.get("same_content"))
     mono = bool(ref_info.get("monochrome"))
     d_med = ref["median"] - f0["median"]
-    # Exposure stays the footage's own. A reference whose midtones sit close to the footage
-    # passes its midtone level on. A night scene on a day shot passes on nothing.
-    carry = 1.0 if same else CARRY["median"] * float(np.clip(1.0 - (abs(d_med) - MID_NEAR) / (MID_FAR - MID_NEAR), 0.0, 1.0))
+    # Bright or dark is part of a look: the midtone level follows the reference. The move stops at
+    # MID_MAX_STOPS, so a night reference darkens a day shot without turning it into night.
+    gap = abs(float(d_med)) / STOP_DI
+    carry = 1.0 if same else float(np.clip(brightness, 0.0, 1.0)) * min(MID_CARRY, MID_MAX_STOPS / max(gap, 1e-6))
     k = {key: 1.0 for key in CARRY} if same else (carry_override or CARRY)   # designed targets (look suggestions) carry in full
     target = {
         "spread": f0["spread"] * (ref["spread"] / np.maximum(f0["spread"], 1e-4)) ** k["spread"],
@@ -257,7 +261,7 @@ def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info
     g = pipeline.look_stage(x_sample, look)
     info = {"x": [round(float(v), 4) for v in x], "cost": cost, "at_limit": at_limit, "mode": "same picture" if same else "different picture",
             "footage": f0, "result": feats(g), "reference": ref, "floor_target": target["floor"],
-            "exposure_gap_stops": round(float(d_med) / 0.0733, 2), "midtone_carry": round(carry, 2)}
+            "exposure_gap_stops": round(float(d_med) / STOP_DI, 2), "midtone_carry": round(carry, 2)}
     return look, info
 
 

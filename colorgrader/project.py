@@ -414,6 +414,12 @@ class Project:
             self.state["strength"] = int(min(100, max(0, round(float(strength)))))
         self.touch()
 
+    def set_brightness(self, brightness: float) -> None:
+        """How far the midtone level follows the reference, 0 to 100. Takes effect on the next build."""
+        with self.lock:
+            self.state["brightness"] = int(min(100, max(0, round(float(brightness)))))
+        self.touch()
+
     def set_look(self, look: dict[str, Any]) -> None:
         base = model.neutral_look()
         base.update({k: v for k, v in look.items() if k in base or k in ("reasons",)})

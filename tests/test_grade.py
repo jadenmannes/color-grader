@@ -78,8 +78,8 @@ def test_known_grade_comes_back_from_a_reference(proj, workdir, name):
     assert report["totals"]["failed"] == 0
 
 
-def test_night_reference_keeps_daytime_exposure(proj, workdir):
-    """A dark reference with other content passes on color and contrast, never its darkness."""
+def test_reference_brightness_follows_or_stays(proj, workdir):
+    """Reference brightness at 0 keeps the footage's exposure. At 100 the midtones move toward a dark reference, 1.25 stops at most."""
     scene = synth.procedural_scene(640, 360, skin=False)
     clip = load_clip(proj, flog2_clip(workdir / "day.mov", scenes=[scene], frames_each=25, size=(640, 360)))
     shot = proj.shots_of(clip["id"])[0]
@@ -89,16 +89,46 @@ def test_night_reference_keeps_daytime_exposure(proj, workdir):
     ref = save_png16(workdir / "night_ref.png", ODT(di))
     proj.set_strength(100)
     proj.set_reference(str(ref))
+    y = lambda im: float(np.median(im @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)))
+    proj.set_brightness(0)
     report = auto.build(proj)
     assert not report["fit"]["same_content"]
     assert report["fit"]["exposure_gap_stops"] < -1.2 and report["fit"]["midtone_carry"] == 0.0
     assert any("exposure stays" in n.lower() for n in report["notes"])
     bal = proj.render_frame(clip["id"], 0.5, "balanced", 640, shot["id"])
     gra = proj.render_frame(clip["id"], 0.5, "graded", 640, shot["id"])
-    y = lambda im: float(np.median(im @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)))
     assert abs(y(gra) - y(bal)) < 0.05                    # midtones stay within 5 points
     wb, wg = wall_patch(bal), wall_patch(gra)
     assert wg[2] / wg[0] > wb[2] / wb[0] + 0.01           # the cool cast of the reference comes across on the gray wall
+    proj.set_brightness(100)
+    report = auto.build(proj)
+    gap, carry = report["fit"]["exposure_gap_stops"], report["fit"]["midtone_carry"]
+    assert 1.0 <= abs(gap) * carry <= 1.3                 # a firm move, capped: day never turns into night
+    dark = proj.render_frame(clip["id"], 0.5, "graded", 640, shot["id"])
+    assert y(dark) < y(gra) - 0.08
+
+
+def test_bright_reference_brightens_the_footage(proj, workdir):
+    """A high-key reference with other content lifts the midtones of darker footage close to its own level."""
+    scene = synth.procedural_scene(640, 360, skin=False) * np.float32(0.6)
+    clip = load_clip(proj, flog2_clip(workdir / "dim.mov", scenes=[scene], frames_each=25, size=(640, 360)))
+    shot = proj.shots_of(clip["id"])[0]
+    bright = synth.procedural_scene(640, 360, seed=9, sky=False, skin=False)[:, ::-1] * np.float32(1.7)
+    lib = library.get()
+    di = W.di_encode(apply_matrix(bright, conversion_matrix(lib.gamut("rec709"), lib.gamut(W.WORKING_GAMUT))))
+    ref_disp = ODT(di)
+    ref = save_png16(workdir / "bright_ref.png", ref_disp)
+    proj.set_strength(100)
+    proj.set_reference(str(ref))
+    report = auto.build(proj)
+    y = lambda im: float(np.median(np.clip(im, 0, 1) @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)))
+    bal = proj.render_frame(clip["id"], 0.5, "balanced", 640, shot["id"])
+    gra = proj.render_frame(clip["id"], 0.5, "graded", 640, shot["id"])
+    gap = report["fit"]["exposure_gap_stops"]
+    assert gap > 0.3
+    assert y(gra) > y(bal) + 0.03
+    assert abs(y(gra) - y(ref_disp)) < 0.6 * abs(y(bal) - y(ref_disp))   # most of the distance covered
+    assert not any(r["status"] == "fail" and r["id"] in ("highlights", "color_clip") for r in proj.shots_of(clip["id"])[0]["rules"])
 
 
 # ------------------------------------------------------------------ balance
