@@ -339,3 +339,15 @@ def test_reference_and_grade_api(client, workdir):
     assert st3["finish"]["vignette"]["enabled"]
     assert client.put(f"/api/shots/{shot['id']}/scene", json={"scene": 3}).status_code == 200
     assert client.delete("/api/reference").status_code == 200
+
+
+def test_burned_in_graphics_keep_their_color():
+    """A saturated title color decoded through a log curve stays a color: no black patches, no negative log values."""
+    from colorgrader.grade import pipeline
+    from colorgrader.color import working as W2
+
+    lin = np.array([[16.2, -0.27, 1.46], [7.5, -0.08, 1.07], [0.4, 0.4, 0.4], [-0.01, -0.01, -0.01]], dtype=np.float32)
+    out = pipeline.limit_gamut(lin)
+    assert out[:2].min() >= -1e-6 and W2.di_encode(out[:2]).min() >= -1e-3
+    assert out[0, 0] > out[0, 2] > out[0, 1]                       # still pink: red over blue over green
+    assert np.allclose(out[2:], lin[2:])                           # in-gamut colors and sub-black values untouched

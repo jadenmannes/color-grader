@@ -31,7 +31,32 @@ def camera_stage(signal_rgb: np.ndarray, idt: InputTransform, corrections: dict[
     gains = correction_gains(corrections)
     if not np.allclose(gains, 1.0):
         lin = lin * gains
-    return lin
+    return limit_gamut(lin)
+
+
+_GAMUT_WEIGHTS = np.array([0.25, 0.65, 0.10], dtype=F32)
+
+
+def limit_gamut(lin: np.ndarray) -> np.ndarray:
+    """Bring colors outside the working gamut back to its edge, keeping hue and brightness.
+
+    Real scenes stay untouched: they hold no negative channel. Burned-in graphics and titles
+    decoded through a log curve do. A negative channel turns into a far negative log value,
+    and every later control reads the color as blacker than black.
+    """
+    mn = lin.min(axis=-1)
+    if not (mn < 0.0).any():
+        return lin
+    # values under the black level of a log curve are negative in every channel: those stay as they are
+    bad = (mn < 0.0) & ((lin @ _GAMUT_WEIGHTS) > 0.0)
+    if not bad.any():
+        return lin
+    out = np.array(lin, dtype=F32, copy=True)
+    px = out[bad]
+    y = (px @ _GAMUT_WEIGHTS)[:, None]
+    t = y / np.maximum(y - px.min(axis=-1, keepdims=True), 1e-9)
+    out[bad] = y + t * (px - y)
+    return out
 
 
 def camera_saturation(corrections: dict[str, Any] | None) -> float:
