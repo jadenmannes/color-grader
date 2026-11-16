@@ -47,7 +47,7 @@ def export_dir() -> Path:
 
 
 def _safe(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "clip"
+    return re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9._-]+", "_", name)).strip("_") or "clip"
 
 
 # -------------------------------------------------------------------- LUTs
@@ -61,9 +61,46 @@ def lut_look(proj, size: int) -> Lut3D:
     return Lut3D.from_function(lambda v: np.clip(pipeline.look_stage(v, look), 0.0, 1.0), size, title="Look, DaVinci WG/Intermediate")
 
 
-def lut_output(proj, size: int) -> Lut3D:
+Z_GAMMA = 2.2
+
+
+def _encode(display_signed: np.ndarray, encoding: str) -> np.ndarray:
+    """LUT output encoding. "display": display code values. "z22": signed display code raised to 2.2.
+
+    Near black a display curve rises with infinite slope and then clips, which a LUT lattice
+    cannot follow. The "z22" form stays close to linear light and runs straight through black,
+    negative values included. The export undoes it with an exact transfer step after the LUT
+    (zscale, linear to gamma 2.2), which also clips at black.
+    """
+    if encoding == "z22":
+        d = np.clip(display_signed, -1.0, 1.0)
+        return np.sign(d) * np.power(np.abs(d), F32(Z_GAMMA))
+    return np.clip(display_signed, 0.0, 1.0)
+
+
+def best_encoding(fn_signed: Callable[[np.ndarray], np.ndarray], size: int) -> str:
+    """Pick the LUT output encoding with the smaller interpolation error on the gray axis.
+
+    fn_signed returns signed display code values. The error counts in lightness (display
+    code to the power 0.8, close to how the eye weighs it), averaged over the ramp.
+    Log sources favor "z22", finished pictures "display".
+    """
+    grid = np.linspace(0.0, 1.0, size, dtype=F32)
+    fine = np.linspace(0.0, 1.0, (size - 1) * 8 + 1, dtype=F32)
+    true = np.clip(fn_signed(np.repeat(fine[:, None], 3, axis=1)), 0.0, 1.0)[:, 1].astype(np.float64)
+    at_grid = fn_signed(np.repeat(grid[:, None], 3, axis=1))
+    light = lambda d: np.power(np.maximum(d, 0.0), 0.8)
+    direct = np.interp(fine, grid, _encode(at_grid, "display")[:, 1])
+    z = np.interp(fine, grid, _encode(at_grid, "z22")[:, 1])
+    z = np.power(np.clip(z, 0.0, 1.0), 1.0 / Z_GAMMA)
+    err_direct = float(np.mean(np.abs(light(direct) - light(true))))
+    err_z = float(np.mean(np.abs(light(z) - light(true))))
+    return "z22" if err_z < err_direct else "display"
+
+
+def lut_output(proj, size: int, encoding: str = "display") -> Lut3D:
     odt = proj.odt()
-    return Lut3D.from_function(lambda v: np.clip(odt(v), 0.0, 1.0), size, title="Output: DaVinci WG/Intermediate to Rec.709")
+    return Lut3D.from_function(lambda v: _encode(odt.signed(v), encoding), size, title="Output: DaVinci WG/Intermediate to Rec.709")
 
 
 def lut_look_output(proj, size: int) -> Lut3D:
@@ -84,11 +121,12 @@ def lut_input(proj, clip: dict[str, Any], size: int) -> Lut3D:
     return Lut3D.from_function(fn, size, title="Input: camera to DaVinci WG/Intermediate")
 
 
-def lut_camera(proj, clip: dict[str, Any], size: int, shot: dict[str, Any] | None = None, to: str = "display",
-               with_look: bool = True) -> Lut3D:
-    """Camera signal through the grade. shot=None leaves the per-shot balance out (a general camera LUT).
+def camera_function(proj, clip: dict[str, Any], shot: dict[str, Any] | None = None, to: str = "display",
+                    with_look: bool = True) -> Callable[[np.ndarray], np.ndarray]:
+    """Camera signal through the grade, as a function. shot=None leaves the per-shot balance out.
 
-    to: "display" ends in Rec.709, "working" stops before finish and output (the export pipeline).
+    to: "display" ends in Rec.709 as signed display code values (see OutputTransform.signed),
+    "working" stops before finish and output (the export pipeline).
     """
     idt, prof = proj.idt(clip)
     corr, cam_sat = prof.get("corrections"), pipeline.camera_saturation(prof.get("corrections"))
@@ -99,9 +137,44 @@ def lut_camera(proj, clip: dict[str, Any], size: int, shot: dict[str, Any] | Non
         di = pipeline.shot_stage(pipeline.camera_stage(v, idt, corr), grade, cam_sat)
         if look is not None:
             di = pipeline.look_stage(di, look)
-        return np.clip(di if to == "working" else odt(di), 0.0, 1.0)
+        return di if to == "working" else odt.signed(di)
 
-    return Lut3D.from_function(fn, size, title="Camera to Rec.709 with look")
+    return fn
+
+
+def lut_camera(proj, clip: dict[str, Any], size: int, shot: dict[str, Any] | None = None, to: str = "display",
+               with_look: bool = True, encoding: str = "display") -> Lut3D:
+    """Camera signal through the grade as a LUT. See camera_function()."""
+    fn = camera_function(proj, clip, shot, to, with_look)
+    if to == "working":  # values below black stay negative: the output table clips them
+        return Lut3D.from_function(lambda v: np.clip(fn(v), -1.0, 1.0), size, title="Camera to DaVinci WG/Intermediate")
+    return Lut3D.from_function(lambda v: _encode(fn(v), encoding), size, title="Camera to Rec.709 with look")
+
+
+OUTPUT_TAGS = {"rec709-gamma24": "Rec709", "rec709-gamma22": "Rec709-Gamma22", "srgb": "sRGB"}
+
+
+def lut_names(proj) -> dict[str, Any]:
+    """File names of the LUT set. The recipe refers to the same names."""
+    st = settings.load()
+    look = proj.state["look"]
+    name = _safe(look.get("name") or "look")
+    out_tag = OUTPUT_TAGS.get(st["output_space"], "Rec709")
+    names: dict[str, Any] = {"look": f"{name}_LOOK_DWG-Intermediate.cube",
+                             "look_output": f"{name}_LOOK_AND_OUTPUT_DWG-Intermediate_to_{out_tag}.cube",
+                             "output": f"OUTPUT_DWG-Intermediate_to_{out_tag}.cube", "profiles": {}}
+    for clip in proj.state["clips"]:
+        key = (clip.get("camera_id"), clip.get("profile_id"))
+        if not all(key) or "/".join(key) in names["profiles"]:
+            continue
+        try:
+            cam, prof = proj.profile_of(clip)
+        except Exception:
+            continue
+        tag = _safe(f"{cam['name']}_{prof['name'].split(' (')[0]}")
+        names["profiles"]["/".join(key)] = {"camera": f"{name}_{tag}_to_{out_tag}.cube", "input": f"INPUT_{tag}_to_DWG-Intermediate.cube",
+                                            "camera_name": cam["name"], "profile_name": prof["name"], "clip_id": clip["id"]}
+    return names
 
 
 def export_luts(proj, folder: Path | None = None) -> dict[str, Any]:
@@ -114,46 +187,41 @@ def export_luts(proj, folder: Path | None = None) -> dict[str, Any]:
     folder.mkdir(parents=True, exist_ok=True)
     strength = proj.state["strength"]
     out_name = W.OUTPUT_SPACES[st["output_space"]]["name"]
+    names = lut_names(proj)
     files = []
 
     def add(fname: str, lut: Lut3D, where: str, comments: list[str]):
-        path = write_cube(folder / fname, lut, comments=[f"Color Grader: {look.get('name', 'look')} at {strength}%"] + comments)
+        path = write_cube(folder / fname, lut, comments=[f"Color Grader: {look.get('name', 'look')} at {strength:g}%"] + comments)
         files.append({"file": str(path), "name": fname, "where": where})
 
-    add(f"{name}_LOOK_DWG-Intermediate.cube", lut_look(proj, size),
+    add(names["look"], lut_look(proj, size),
         "DaVinci Resolve, timeline level. Place it after the balance nodes and before the output conversion. It replaces the look nodes of the recipe.",
         ["Input: DaVinci Wide Gamut / DaVinci Intermediate", "Output: DaVinci Wide Gamut / DaVinci Intermediate",
          "Place after input conversion and balance, before the output conversion."])
-    add(f"{name}_LOOK+OUTPUT_DWG-Intermediate_to_Rec709.cube", lut_look_output(proj, size),
+    add(names["look_output"], lut_look_output(proj, size),
         f"DaVinci Resolve, last node. It replaces the look nodes and both output conversion nodes. Output is {out_name}.",
         ["Input: DaVinci Wide Gamut / DaVinci Intermediate", f"Output: {out_name}", "Place as the last node, after balance."])
-    add("OUTPUT_DWG-Intermediate_to_Rec709.cube", lut_output(proj, size),
+    add(names["output"], lut_output(proj, size),
         "Optional. The app's output conversion as one LUT, for the last node. Same result as the two output nodes of the recipe.",
         ["Input: DaVinci Wide Gamut / DaVinci Intermediate", f"Output: {out_name}"])
-    seen = set()
-    for clip in proj.state["clips"]:
-        key = (clip.get("camera_id"), clip.get("profile_id"))
-        if not all(key) or key in seen:
-            continue
-        seen.add(key)
-        try:
-            cam, prof = proj.profile_of(clip)
-        except Exception:
-            continue
-        tag = _safe(f"{cam['name']}_{prof['name'].split(' (')[0]}")
-        add(f"{name}_{tag}_to_Rec709.cube", lut_camera(proj, clip, size),
-            f"Any editor. Apply to {cam['name']} {prof['name']} clips as they come from the camera. Holds input conversion, look and output. "
+    for key, n in names["profiles"].items():
+        clip = proj.clip(n["clip_id"])
+        add(n["camera"], lut_camera(proj, clip, size),
+            f"Any editor. Apply to {n['camera_name']} {n['profile_name']} clips as they come from the camera. Holds input conversion, look and output. "
             "Balance each shot before this LUT where your editor allows it.",
-            [f"Input: {cam['name']} {prof['name']}, as recorded", f"Output: {out_name}",
+            [f"Input: {n['camera_name']} {n['profile_name']}, as recorded", f"Output: {out_name}",
              "Premiere Pro: Lumetri, Basic Correction, Input LUT. Final Cut Pro: Custom LUT effect. Resolve: on the clip, with no other conversion."])
-        add(f"INPUT_{tag}_to_DWG-Intermediate.cube", lut_input(proj, clip, max(size, 33)),
-            f"DaVinci Resolve, first node of {cam['name']} {prof['name']} clips. Same job as the input conversion node of the recipe.",
-            [f"Input: {cam['name']} {prof['name']}, as recorded", "Output: DaVinci Wide Gamut / DaVinci Intermediate"])
-    lines = [f"LUTs for the look '{look.get('name', 'look')}' at {strength}% strength, {size} points per side.", ""]
+        add(n["input"], lut_input(proj, clip, max(size, 33)),
+            f"DaVinci Resolve, first node of {n['camera_name']} {n['profile_name']} clips. Same job as the input conversion node of the recipe.",
+            [f"Input: {n['camera_name']} {n['profile_name']}, as recorded", "Output: DaVinci Wide Gamut / DaVinci Intermediate"])
+    lines = [f"LUTs for the look '{look.get('name', 'look')}' at {strength:g}% strength, {size} points per side.", ""]
     for f in files:
         lines += [f["name"], "  " + f["where"], ""]
     lines += ["The LUTs hold the shared look. They hold no per-shot balance, vignette or grain.",
-              "Rebuild the LUTs after you change the look or its strength."]
+              "Rebuild the LUTs after you change the look or its strength.",
+              "",
+              "Resolve: copy the files into the LUT folder (Project Settings, Color Management, Open LUT Folder), then press Update Lists.",
+              "Full data levels: the camera LUTs expect the clip as recorded. For log clips set Clip Attributes, Data Levels to Full when the recipe says so."]
     (folder / "WHERE_THE_LUTS_GO.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"folder": str(folder), "files": files, "size": size}
 
@@ -247,27 +315,31 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     grain = finish["grain"] if finish["grain"].get("enabled") else None
     two_stage = bool(vig or grain)
     lut_size = 33 if preview else 65
+    use_z = has_filter("zscale")
     say(0.02, "Building the grade tables")
+    # Output encoding of the last LUT: the form that follows the deepest shadows best (see _encode).
+    enc = "display"
+    if use_z and stage != "source":
+        enc = best_encoding(proj.odt().signed if two_stage else camera_function(proj, clip, None, "display", with_look=False), lut_size)
     lut_files = []
     for s in shots:
         target = "working" if two_stage else "display"
         if stage == "source":
             lut = None
         elif stage == "converted":
-            lut = lut_camera(proj, clip, lut_size, None, target, with_look=False)
+            lut = lut_camera(proj, clip, lut_size, None, target, with_look=False, encoding=enc)
         else:
-            lut = lut_camera(proj, clip, lut_size, s, target, with_look=(stage == "graded"))
+            lut = lut_camera(proj, clip, lut_size, s, target, with_look=(stage == "graded"), encoding=enc)
         if lut is not None:
             p = write_cube(work / f"shot_{s['index']:03d}.cube", lut)
             lut_files.append((s, p))
-    lut_b = write_cube(work / "output.cube", lut_output(proj, lut_size)) if two_stage else None
+    lut_b = write_cube(work / "output.cube", lut_output(proj, lut_size, enc)) if two_stage else None
 
     w, h = info["display_width"], info["display_height"]
     if max_width and w > max_width:
         h = int(round(h * max_width / w / 2)) * 2
         w = int(round(max_width / 2)) * 2
     fps = info["fps"] or 25.0
-    use_z = has_filter("zscale")
     matrix = {"bt709": "709", "bt2020nc": "2020_ncl", "bt2020c": "2020_cl", "bt601": "170m", "smpte170m": "170m", "bt470bg": "470bg"}[info["matrix"]]
     sws_matrix = {"bt709": "bt709", "bt2020nc": "bt2020", "bt2020c": "bt2020", "bt601": "smpte170m", "smpte170m": "smpte170m", "bt470bg": "bt470bg"}[info["matrix"]]
     idt_full = proj.idt(clip)[0].full_range if clip.get("profile_id") else info["full_range"]
@@ -317,12 +389,14 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     tail = []
     if lut_b is not None:
         tail.append(f"lut3d=file='{_ff_path(lut_b)}':interp=tetrahedral")
+    trc = W.OUTPUT_SPACES[st["output_space"]]["trc_tag"]
     if use_z:
-        tail.append(f"zscale=matrix=709:range=limited:dither=error_diffusion,format={f['pix']}")
+        undo = "transferin=linear:transfer=bt470m:primariesin=709:primaries=709:" if enc == "z22" else ""  # exact power 1/2.2
+        tail.append(f"zscale={undo}matrix=709:range=limited:dither=error_diffusion,format={f['pix']}")
     else:
         tail.append(f"scale=out_color_matrix=bt709:out_range=tv:sws_dither=ed:flags=accurate_rnd+full_chroma_int,format={f['pix']}")
+    tail.append(f"setparams=color_primaries=bt709:color_trc={trc}:colorspace=bt709:range=tv")
     graph += f";[{last}]{','.join(tail)}[out]"
-    trc = W.OUTPUT_SPACES[st["output_space"]]["trc_tag"]
     cmd = [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", *inputs, "-filter_complex", graph, "-map", "[out]"]
     codec = list(f["codec"])
     if preview:
@@ -353,6 +427,73 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     say(1.0, "Done")
     return {"path": str(out_path), "format": f["id"], "format_name": f["name"], "seconds": round(time.time() - t0, 1),
             "width": w, "height": h, "pix_fmt": f["pix"], "tags": {"primaries": "bt709", "transfer": trc, "matrix": "bt709", "range": "tv"}}
+
+
+def render_clips(proj, clip_ids: list[str] | None = None, fmt: str | None = None,
+                 progress: Callable[[float, str], None] | None = None) -> dict[str, Any]:
+    """Export several clips, one file each."""
+    say = progress or (lambda f, m: None)
+    todo = [c for c in proj.state["clips"] if not c["info"]["is_image"] and (not clip_ids or c["id"] in clip_ids)]
+    if not todo:
+        raise ExportError("No video clips to export.")
+    total = sum(max(c["info"]["duration"], 0.1) for c in todo)
+    done, files, used = 0.0, [], set()
+    for c in todo:
+        share = max(c["info"]["duration"], 0.1) / total
+        f = _resolve_format(fmt or settings.load()["export_format"], c["info"])
+        stem = _safe(Path(c["name"]).stem) + "_graded"
+        name, n = stem, 2
+        while name in used:   # two clips with the same file name in different folders
+            name, n = f"{stem}_{n}", n + 1
+        used.add(name)
+        out = export_dir() / f"{name}{f['ext']}"
+        r = render_clip(proj, c["id"], out, fmt, progress=lambda fr, m, d=done, sh=share, nm=c["name"]: say(d + sh * fr, f"{m}: {nm}"))
+        r["clip_id"], r["name"] = c["id"], Path(r["path"]).name
+        files.append(r)
+        done += share
+    say(1.0, "Done")
+    return {"folder": str(export_dir()), "files": files}
+
+
+# ----------------------------------------------------------- graded playback
+def _preview_signature(proj, clip_id: str, stage: str) -> str:
+    import hashlib
+    import json
+
+    st = settings.load()
+    clip = proj.clip(clip_id)
+    core = [stage, proj.state["look"] if stage == "graded" else None, proj.state["strength"] if stage == "graded" else None,
+            proj.state["finish"] if stage == "graded" else None,
+            [(s["start"], s["end"], s.get("grade")) for s in proj.shots_of(clip_id)], clip.get("camera_id"), clip.get("profile_id"),
+            proj.profile_signature(clip), st["output_space"], st["max_input_nits"], PREVIEW_WIDTH]
+    return hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+PREVIEW_WIDTH = 960
+
+
+def preview_file(proj, clip_id: str, stage: str = "graded") -> Path:
+    return proj.cache_dir(clip_id) / "preview" / f"{stage}.mp4"
+
+
+def preview_ready(proj, clip_id: str, stage: str = "graded") -> bool:
+    f = preview_file(proj, clip_id, stage)
+    sig = f.with_suffix(".sig")
+    try:
+        return f.exists() and f.stat().st_size > 0 and sig.read_text() == _preview_signature(proj, clip_id, stage)
+    except OSError:
+        return False
+
+
+def build_preview(proj, clip_id: str, stage: str = "graded", progress: Callable[[float, str], None] | None = None) -> dict[str, Any]:
+    """Small H.264 file of the clip at one stage, for playback in the app."""
+    sig = _preview_signature(proj, clip_id, stage)
+    f = preview_file(proj, clip_id, stage)
+    if not preview_ready(proj, clip_id, stage):
+        f.with_suffix(".sig").unlink(missing_ok=True)
+        render_clip(proj, clip_id, f, max_width=PREVIEW_WIDTH, progress=progress, stage=stage, preview=True)
+        f.with_suffix(".sig").write_text(sig)
+    return {"clip_id": clip_id, "stage": stage, "signature": sig}
 
 
 def _ff_path(p: Path) -> str:

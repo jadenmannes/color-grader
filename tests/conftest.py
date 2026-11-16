@@ -36,3 +36,12 @@ def client():
 
     project.get().reset()
     return TestClient(server.app)
+
+
+@pytest.fixture()
+def proj():
+    from colorgrader import project
+
+    p = project.get()
+    p.reset()
+    return p

@@ -36,3 +36,12 @@ def wall_patch(img: np.ndarray) -> np.ndarray:
     """Mean color of the neutral wall in synth.procedural_scene."""
     h, w = img.shape[:2]
     return img[int(h * 0.50):int(h * 0.56), int(w * 0.04):int(w * 0.20)].reshape(-1, 3).mean(axis=0)
+
+
+def load_clip(p, path, profile=("fujifilm-x-m5", "f-log2")):
+    """Add a clip to the project, set its profile and analyze it."""
+    clip = p.add_clip(str(path))
+    if profile:
+        p.set_profile(clip["id"], *profile)
+    p.analyze_clip(clip["id"])
+    return p.clip(clip["id"])

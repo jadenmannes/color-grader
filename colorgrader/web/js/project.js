@@ -84,7 +84,7 @@ function ClipRow({ ctx, clip, shots, sel, onSelect, onAnalyze }) {
     </div>`;
 }
 
-function Viewer({ clip, shot, t, before, after, version, reference }) {
+function Viewer({ clip, shot, t, before, after, version, reference, play }) {
   const [split, setSplit] = useState(0.5);
   const box = useRef(null);
   const drag = useRef(false);
@@ -103,6 +103,18 @@ function Viewer({ clip, shot, t, before, after, version, reference }) {
   const base = { clip: clip.id, t: t.toFixed(3), w: 1280, shot: shot ? shot.id : undefined, v: version };
   const urlA = '/api/frame?' + qs({ ...base, stage: before });
   const urlB = '/api/frame?' + qs({ ...base, stage: after });
+  const refBox = reference && html`<div class="refbox"><img src=${`/api/reference/frame?v=${version}`} /><div class="tag l">Reference</div></div>`;
+  if (play) {
+    return html`
+      <div class="viewer-wrap">
+        <div class="viewer"><div class="stage">
+          <video src=${play.url} controls autoplay loop playsinline muted
+            onLoadedMetadata=${(e) => { if (shot && shot.start > 0) e.target.currentTime = shot.start; }}></video>
+          <div class="tag l">Graded playback, preview quality</div>
+        </div></div>
+        ${refBox}
+      </div>`;
+  }
   return html`
     <div class="viewer-wrap">
       <div class="viewer">
@@ -114,7 +126,7 @@ function Viewer({ clip, shot, t, before, after, version, reference }) {
           <div class="tag r">${STAGE_NAMES[after]}</div>
         </div>
       </div>
-      ${reference && html`<div class="refbox"><img src=${`/api/reference/frame?v=${version}`} /><div class="tag l">Reference</div></div>`}
+      ${refBox}
     </div>`;
 }
 
@@ -188,6 +200,22 @@ export function ProjectPage({ ctx }) {
 
   const analyze = (ids) => runJob(() => api.post('/api/analyze', { clip_ids: ids }), 'Analyzing footage');
 
+  // graded playback: a small preview file rendered by ffmpeg with the full grade
+  const [play, setPlay] = useState(null);
+  useEffect(() => { setPlay(null); }, [clip && clip.id, version]);
+  const startPlay = async () => {
+    if (!clip) return;
+    try {
+      let st = await api.get('/api/playback/status?' + qs({ clip: clip.id, stage: 'graded' }));
+      if (!st.ready) {
+        const done = await runJob(() => api.post('/api/playback/build', { clip_id: clip.id, stage: 'graded' }), 'Rendering playback');
+        if (!done) return;
+        st = await api.get('/api/playback/status?' + qs({ clip: clip.id, stage: 'graded' }));
+      }
+      if (st.ready) setPlay({ url: st.url });
+    } catch (e) { notify(e.message); }
+  };
+
   const addPaths = async (paths) => {
     if (!paths || !paths.length) return;
     try {
@@ -234,8 +262,11 @@ export function ProjectPage({ ctx }) {
         <${ReferenceCard} ctx=${ctx} />
       </div>
       <div class="col center">
-        <${Viewer} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} version=${version} reference=${proj.reference} />
+        <${Viewer} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} version=${version} reference=${proj.reference} play=${play} />
         ${clip && html`<div class="transport">
+          ${!clip.info.is_image && proj.graded ? (play
+            ? html`<button class="small" onClick=${() => setPlay(null)}>Back to frames</button>`
+            : html`<button class="small" title="Renders a small preview file of the whole clip with the grade, then plays it" onClick=${startPlay}>▶ Play graded</button>`) : ''}
           <span class="mono">${fmtTime(t)}</span>
           <input type="range" min=${shot ? shot.start : 0} max=${shot ? Math.max(shot.start, shot.end - 0.04) : clip.info.duration} step="0.04" value=${t}
             onInput=${(e) => setT(parseFloat(e.target.value))} />

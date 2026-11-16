@@ -115,6 +115,15 @@ class OutputTransform:
     def __call__(self, di: np.ndarray) -> np.ndarray:
         return self._curve().encode(self.display_linear(di))
 
+    def signed(self, di: np.ndarray) -> np.ndarray:
+        """Display code values that keep their sign: light below black comes out negative.
+
+        Same as __call__ for everything a display shows. LUT builders use it so the
+        table runs smoothly through black and the clip happens after interpolation.
+        """
+        lin = apply_matrix(W.di_decode(di), self._m())
+        return np.sign(lin) * self._curve().encode(W.tm_forward(np.abs(lin), self.max_input_nits))
+
     def inverse(self, display_rgb: np.ndarray, curve: Curve | None = None) -> np.ndarray:
         """Display R'G'B' -> working space. `curve` overrides the display curve (sRGB stills)."""
         curve = curve or self._curve()

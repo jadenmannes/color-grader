@@ -25,6 +25,7 @@ from .grade import pipeline
 app = FastAPI(title="Color Grader", version=__version__)
 
 _previews: dict[str, dict[str, Any]] = {}
+FEATURE_SUGGESTIONS = False
 
 
 def _err(exc: Exception, code: int = 400) -> HTTPException:
@@ -41,7 +42,7 @@ def _draft_signature(cam: dict[str, Any]) -> str:
 def get_state() -> dict[str, Any]:
     p = project.get()
     return {"project": p.public_state(), "settings": settings.load(), "jobs": jobs.active(), "version": __version__,
-            "home": str(paths.home())}
+            "home": str(paths.home()), "features": {"suggestions": FEATURE_SUGGESTIONS}}
 
 
 @app.get("/api/library")
@@ -50,7 +51,7 @@ def get_library() -> dict[str, Any]:
     lib = library.get()
     return {"curves": lib.list_curves(), "gamuts": lib.list_gamuts(),
             "output_spaces": [{"id": k, "name": v["name"]} for k, v in W.OUTPUT_SPACES.items()],
-            "ranges": list(cameras.RANGES), "settings_choices": settings.CHOICES}
+            "ranges": list(cameras.RANGES), "settings_choices": settings.choices()}
 
 
 @app.get("/api/settings")
@@ -415,6 +416,193 @@ def set_scene(shot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     except (project.ProjectError, ValueError) as exc:
         raise _err(exc)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ recipe
+@app.get("/api/recipe/editors")
+def recipe_editors() -> list[dict[str, Any]]:
+    from . import recipes
+
+    return recipes.available()
+
+
+@app.get("/api/recipe")
+def get_recipe(editor: str | None = None, edition: str | None = None) -> dict[str, Any]:
+    from . import recipes
+
+    return recipes.build(project.get(), editor, edition)
+
+
+@app.get("/api/recipe.txt")
+def get_recipe_text(editor: str | None = None, edition: str | None = None) -> Response:
+    from . import recipes
+
+    r = recipes.build(project.get(), editor, edition)
+    return Response(r["text"], media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="recipe_{r["editor"]}.txt"'})
+
+
+# ------------------------------------------------------------------ export
+@app.get("/api/export/formats")
+def export_formats() -> list[dict[str, Any]]:
+    from . import export
+
+    return [{"id": k, "name": v["name"]} for k, v in export.FORMATS.items()]
+
+
+@app.post("/api/export/luts")
+def export_luts() -> dict[str, Any]:
+    from . import export
+
+    p = project.get()
+
+    def work(progress):
+        progress(0.1, "Building the LUT set")
+        return export.export_luts(p)
+
+    return {"job": jobs.start("export-luts", work, "Exporting the LUT set")}
+
+
+@app.post("/api/export/video")
+def export_video(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    from . import export
+
+    p = project.get()
+    ids = body.get("clip_ids") or None
+    fmt = body.get("format") or None
+    if fmt and fmt not in export.FORMATS:
+        raise _err(ValueError("Unknown export format."))
+    return {"job": jobs.start("export-video", lambda progress: export.render_clips(p, ids, fmt, progress), "Exporting graded clips")}
+
+
+@app.post("/api/open-folder")
+def open_folder(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Show an export folder in the system file manager. Only folders inside the app's own folders open."""
+    from . import export
+
+    target = Path(body.get("path") or export.export_dir()).expanduser().resolve()
+    if target.is_file():
+        target = target.parent
+    roots = [export.export_dir().resolve(), paths.home().resolve()]
+    if not target.is_dir() or not any(target == r or r in target.parents for r in roots):
+        raise _err(ValueError("This folder does not belong to the app."))
+    try:
+        if sys.platform.startswith("win"):
+            import os
+
+            os.startfile(str(target))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(target)])
+        else:
+            subprocess.Popen(["xdg-open", str(target)])
+    except OSError as exc:
+        return {"ok": False, "path": str(target), "error": str(exc)}
+    return {"ok": True, "path": str(target)}
+
+
+# -------------------------------------------------------- graded playback
+@app.get("/api/playback/status")
+def playback_status(clip: str, stage: str = "graded") -> dict[str, Any]:
+    from . import export
+
+    p = project.get()
+    try:
+        ready = export.preview_ready(p, clip, stage)
+    except project.ProjectError as exc:
+        raise _err(exc, 404)
+    return {"ready": ready, "url": f"/api/playback/video?clip={clip}&stage={stage}&v={int(time.time())}" if ready else None}
+
+
+@app.post("/api/playback/build")
+def playback_build(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    from . import export
+
+    p = project.get()
+    clip, stage = body.get("clip_id", ""), body.get("stage", "graded")
+    if stage not in ("graded", "converted", "balanced"):
+        raise _err(ValueError("Unknown stage."))
+    try:
+        p.clip(clip)
+    except project.ProjectError as exc:
+        raise _err(exc, 404)
+    return {"job": jobs.start("playback", lambda progress: export.build_preview(p, clip, stage, progress), "Rendering playback")}
+
+
+@app.get("/api/playback/video")
+def playback_video(clip: str, stage: str = "graded") -> FileResponse:
+    from . import export
+
+    try:
+        f = export.preview_file(project.get(), clip, stage)
+    except project.ProjectError as exc:
+        raise _err(exc, 404)
+    if not f.exists():
+        raise HTTPException(404, "Render the playback first.")
+    return FileResponse(f, media_type="video/mp4", headers={"Cache-Control": "no-store"})
+
+
+# ------------------------------------------------------------- saved looks
+@app.get("/api/looks")
+def list_looks() -> list[dict[str, Any]]:
+    from . import looks
+
+    return looks.list_looks()
+
+
+@app.post("/api/looks")
+def save_look(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    from . import looks
+
+    p = project.get()
+    thumb = None
+    try:  # preview picture: the lead shot of the project under the look
+        shots = p.state["shots"]
+        if shots:
+            s = next((x for x in shots if x.get("is_lead")), shots[0])
+            t = s["times"][len(s["times"]) // 2] if s.get("times") else 0.5 * (s["start"] + s["end"])
+            thumb = pipeline.to_jpeg(p.render_frame(s["clip_id"], t, "graded", 480, s["id"]), 85)
+    except Exception:
+        thumb = None
+    try:
+        return looks.save_look(p, body.get("name", ""), thumb)
+    except looks.LookError as exc:
+        raise _err(exc)
+
+
+@app.delete("/api/looks/{look_id}")
+def delete_look(look_id: str) -> dict[str, Any]:
+    from . import looks
+
+    try:
+        looks.delete_look(look_id)
+    except looks.LookError as exc:
+        raise _err(exc, 404)
+    return {"ok": True}
+
+
+@app.get("/api/looks/{look_id}/thumb.jpg")
+def look_thumb(look_id: str) -> FileResponse:
+    from . import looks
+
+    f = looks.thumb_path(look_id)
+    if not f.exists():
+        raise HTTPException(404, "No preview")
+    return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/looks/{look_id}/apply")
+def apply_look(look_id: str) -> dict[str, Any]:
+    from . import looks
+    from .grade import auto
+
+    p = project.get()
+    try:
+        looks.apply_look(p, look_id)
+    except looks.LookError as exc:
+        raise _err(exc, 404)
+    if not p.state["shots"]:
+        return {"job": None, "project": p.public_state()}
+    return {"job": jobs.start("grade", lambda progress: auto.build(p, progress, refit=False), "Applying the saved look")}
 
 
 # ------------------------------------------------------------------ static

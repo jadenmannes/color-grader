@@ -5,8 +5,10 @@ export function SettingsPage({ ctx }) {
   const { state, lib, refresh, notify } = ctx;
   const [s, setS] = useState(state.settings);
   const [formats, setFormats] = useState([]);
+  const [editors, setEditors] = useState([]);
   useEffect(() => { setS(state.settings); }, [state.settings]);
   useEffect(() => { api.get('/api/export/formats').then(setFormats).catch(() => setFormats([])); }, []);
+  useEffect(() => { api.get('/api/recipe/editors').then(setEditors).catch(() => setEditors([])); }, []);
   const save = async (patch) => {
     const next = { ...s, ...patch };
     setS(next);
@@ -24,8 +26,8 @@ export function SettingsPage({ ctx }) {
         <h3 style="margin-top:0">Editor</h3>
         <div class="grid2">
           <div><label>Target editor</label><select value=${s.target_editor} onChange=${(e) => save({ target_editor: e.target.value })}>
-            <option value="resolve">DaVinci Resolve</option></select>
-            <div class="hint">Each editor is one recipe module. More editors arrive as more modules.</div></div>
+            ${editors.length ? editors.map((e) => html`<option value=${e.id}>${e.name}</option>`) : html`<option value=${s.target_editor}>${s.target_editor}</option>`}</select>
+            <div class="hint">Each editor is one recipe module. A new editor arrives as one more module.</div></div>
           <div><label>Resolve edition</label><select value=${s.resolve_edition} onChange=${(e) => save({ resolve_edition: e.target.value })}>
             <option value="free">Free</option><option value="studio">Studio</option></select>
             <div class="hint">The recipe marks steps that need Studio.</div></div>

@@ -22,12 +22,18 @@ DEFAULTS: dict[str, Any] = {
 }
 
 CHOICES = {
-    "target_editor": ["resolve"],
     "resolve_edition": ["free", "studio"],
     "lut_size": [17, 33, 65],
     "lut_format": ["cube"],
     "output_space": list(W.OUTPUT_SPACES.keys()),
 }
+
+
+def choices() -> dict[str, list]:
+    """Allowed values per setting. Editors and export formats come from their own modules."""
+    from . import export, recipes
+
+    return dict(CHOICES, target_editor=list(recipes.registry().keys()), export_format=list(export.FORMATS.keys()))
 
 
 def _file():
@@ -47,11 +53,14 @@ def load() -> dict[str, Any]:
 
 def save(values: dict[str, Any]) -> dict[str, Any]:
     cur = load()
+    allowed = choices()
     for k, v in values.items():
         if k not in DEFAULTS:
             continue
-        if k in CHOICES and v not in CHOICES[k]:
-            raise ValueError(f"{k}: pick one of {CHOICES[k]}")
+        if k in allowed and v not in allowed[k]:
+            raise ValueError(f"{k}: pick one of {allowed[k]}")
+        if k == "export_folder":
+            v = str(v or "").strip()
         if k == "look_strength":
             v = int(min(100, max(0, int(v))))
         if k == "analysis_fps":
