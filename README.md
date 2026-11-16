@@ -94,7 +94,9 @@ Cameras are data. Each camera is one JSON file in `~/ColorGrader/cameras`. Addin
 - A clip from an unknown camera opens the form, filled in with what the metadata shows.
 - Edit, delete, export and import cameras as files. An exported file carries its own curve and gamut definitions.
 
-Shipped cameras: Fujifilm X-M5 (F-Log2, F-Log, film simulations, HLG) and a generic phone (standard, HDR HLG, HDR PQ, Apple Log).
+Shipped cameras: Fujifilm X-M5 (F-Log2, F-Log, film simulations, HLG), Sony A7C II (S-Log3 with S-Gamut3.Cine or S-Gamut3, HLG, standard and S-Cinetone) and a generic phone (standard, HDR HLG, HDR PQ, Apple Log).
+
+Sony and other cameras write their settings into an XML file next to each clip (`C0001M01.XML`) and into the clip itself. The app reads it and shows the values as `xml.*` tags. A profile names the tags that settle it, for example `xml.capturegammaequation=s-log3-cine`. Keep the XML next to the clip when you copy footage off the card.
 
 Shipped curves with published math: Sony S-Log3, Canon Log 3, Panasonic V-Log, Nikon N-Log, Apple Log, HLG, PQ, Rec.709, sRGB, DaVinci Intermediate. The Fujifilm F-Log and F-Log2 curves live inside the X-M5 camera file.
 

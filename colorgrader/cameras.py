@@ -166,6 +166,7 @@ def normalize(cam: dict[str, Any]) -> dict[str, Any]:
             "transfer": [str(t) for t in det.get("transfer", []) or []],
             "primaries": [str(t) for t in det.get("primaries", []) or []],
             "image": det.get("image", "any"),
+            "metadata": [str(t).strip() for t in det.get("metadata", []) or [] if str(t).strip()],
         }
         corr = dict(DEFAULT_CORRECTIONS)
         for k, v in (p.get("corrections") or {}).items():
@@ -291,15 +292,44 @@ def image_stats(info: dict[str, Any]) -> dict[str, float]:
             "spread": float(q[3] - q[1])}
 
 
+def metadata_hit(profile: dict[str, Any], info: dict[str, Any]) -> str:
+    """First entry of the profile's detect.metadata list found in the file metadata.
+
+    "key=value" compares one tag exactly (case-insensitive). Any other entry
+    matches as text anywhere in the metadata.
+    """
+    tags = {str(k).lower(): str(v).strip().lower() for k, v in (info.get("tags") or {}).items()}
+    text = None
+    for entry in (profile.get("detect") or {}).get("metadata") or []:
+        e = entry.strip().lower()
+        if "=" in e:
+            k, v = (s.strip() for s in e.split("=", 1))
+            if tags.get(k) == v:
+                return entry
+        elif e:
+            text = text if text is not None else media.metadata_text(info).lower()
+            if e in text:
+                return entry
+    return ""
+
+
 def rank_profiles(cam: dict[str, Any], info: dict[str, Any], stats: dict[str, float] | None = None) -> list[dict[str, Any]]:
     """Score each profile of a camera against file tags, then against the picture."""
     lib = library.get()
     out = []
     transfer = (info.get("color_transfer") or "unknown").lower()
     primaries = (info.get("color_primaries") or "unknown").lower()
+    meta_hits = {p.get("id"): metadata_hit(p, info) for p in cam.get("profiles", [])}
+    any_meta = any(meta_hits.values())
     for p in cam.get("profiles", []):
         det = p.get("detect") or {}
         score, why = 0.0, []
+        if meta_hits.get(p.get("id")):
+            score += 5.0
+            why.append(f"metadata tag '{meta_hits[p.get('id')]}' matches")
+        elif any_meta and det.get("metadata"):
+            score -= 4.0
+            why.append("metadata tags name another profile")
         if det.get("bit_depth"):
             if info["bit_depth"] in det["bit_depth"]:
                 score += 1.0

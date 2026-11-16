@@ -192,3 +192,54 @@ def test_maker_lut_profile(client, workdir, home):
     data = cameras.export_camera(exported_ok["id"])
     assert "LUT_3D_SIZE 33" in data["profiles"][0]["input"]["lut_text"]
     cameras.delete_camera(exported_ok["id"])
+
+
+SIDECAR_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<NonRealTimeMeta xmlns="urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.20" lastUpdate="2026-10-31T12:30:57+01:00">
+  <Duration value="8184"/>
+  <VideoFormat>
+    <VideoRecPort port="DIRECT"/>
+    <VideoFrame videoCodec="AVC_3840_2160_HP@L51" captureFps="25p" formatFps="25p"/>
+    <VideoLayout pixel="3840" numOfVerticalLine="2160" aspectRatio="16:9"/>
+  </VideoFormat>
+  <Device manufacturer="Sony" modelName="ILCE-7CM2" serialNo="0000000"/>
+  <Lens modelName="FE 28-60mm F4-5.6"/>
+  <AcquisitionRecord>
+    <Group name="CameraUnitMetadataSet">
+      <Item name="CaptureGammaEquation" value="s-log3-cine"/>
+      <Item name="CaptureColorPrimaries" value="S-Gamut3Cine"/>
+      <Item name="CodingEquations" value="rec709"/>
+    </Group>
+  </AcquisitionRecord>
+</NonRealTimeMeta>
+"""
+
+
+def test_camera_xml_sidecar_settles_camera_and_profile(workdir):
+    """A clip with a camera XML sidecar matches camera and profile from metadata, no confirm needed."""
+    from colorgrader import media
+
+    folder = workdir / "xml_sidecar"
+    folder.mkdir(exist_ok=True)
+    clip = slog3_clip(folder / "C0001.MP4", frames_each=8)
+    det = cameras.detect(media.probe(clip))
+    assert det["camera_id"] != "sony-a7c-ii"   # no sidecar yet: model unknown
+    (folder / "C0001M01.XML").write_text(SIDECAR_XML, encoding="utf-8")
+    info = media.probe(clip)
+    assert info["model"] == "ILCE-7CM2" and info["tags"]["xml.capturegammaequation"] == "s-log3-cine"
+    det = cameras.detect(info)
+    assert det["camera_id"] == "sony-a7c-ii"
+    assert det["profile_id"] == "s-log3-s-gamut3-cine" and not det["needs_confirm"] and det["method"] == "metadata"
+
+
+def test_camera_xml_inside_the_clip(workdir):
+    """The same XML block embedded in the media file works without a sidecar."""
+    from colorgrader import media
+
+    folder = workdir / "xml_embedded"
+    folder.mkdir(exist_ok=True)
+    clip = slog3_clip(folder / "C0002.mov", frames_each=8)
+    data = clip.read_bytes()
+    clip.write_bytes(data + SIDECAR_XML.encode("utf-8"))   # trailing bytes after the last atom: decoders ignore them
+    tags = media.camera_xml_tags(clip)
+    assert tags["xml.device.modelname"] == "ILCE-7CM2" and tags["xml.capturecolorprimaries"] == "S-Gamut3Cine"

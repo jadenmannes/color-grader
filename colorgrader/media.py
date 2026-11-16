@@ -103,6 +103,74 @@ def _fraction(text: str | None) -> float:
         return 0.0
 
 
+XML_SCAN_BYTES = 4 * 1024 * 1024
+_XML_BLOCK = re.compile(rb"<NonRealTimeMeta\b.*?</NonRealTimeMeta>", re.S)
+_XML_ELEMENT = re.compile(r"<([A-Za-z][\w.-]*)\s+([^<>]*?)/?>")
+_XML_ATTR = re.compile(r"([A-Za-z_][\w.-]*)\s*=\s*\"([^\"]*)\"")
+
+
+def _sidecar_xml(path: Path) -> Path | None:
+    """Camera XML written next to the clip: C0001.MP4 -> C0001M01.XML or C0001.XML."""
+    wanted = {f"{path.stem}m01.xml".lower(), f"{path.stem}.xml".lower()}
+    try:
+        for f in path.parent.iterdir():
+            if f.name.lower() in wanted and f.is_file():
+                return f
+    except OSError:
+        pass
+    return None
+
+
+def camera_xml_tags(path: str | Path) -> dict[str, str]:
+    """Settings from camera XML metadata, as flat 'xml.*' tags.
+
+    Reads the sidecar file first, then looks for the same XML block inside the
+    clip (some cameras embed it in MP4 files). Element attributes become
+    'xml.<element>.<attribute>'. <Item name=".." value=".."/> becomes
+    'xml.<name>'. Camera files match on these tags with
+    detect.metadata entries such as 'xml.capturegammaequation=<value>'.
+    """
+    path = Path(path)
+    blob = b""
+    side = _sidecar_xml(path)
+    if side is not None:
+        try:
+            blob = side.read_bytes()[:XML_SCAN_BYTES]
+        except OSError:
+            blob = b""
+    if b"NonRealTimeMeta" not in blob:
+        try:
+            size = path.stat().st_size
+            with open(path, "rb") as fh:
+                head = fh.read(XML_SCAN_BYTES)
+                tail = b""
+                if size > XML_SCAN_BYTES:
+                    fh.seek(max(XML_SCAN_BYTES, size - XML_SCAN_BYTES))
+                    tail = fh.read(XML_SCAN_BYTES)
+            m = _XML_BLOCK.search(head) or _XML_BLOCK.search(tail)
+            blob = m.group(0) if m else b""
+        except OSError:
+            blob = b""
+    m = _XML_BLOCK.search(blob)
+    if not m:
+        return {}
+    text = m.group(0).decode("utf-8", errors="replace")
+    out: dict[str, str] = {}
+    for el, attrs in _XML_ELEMENT.findall(text):
+        pairs = dict((k.lower(), v) for k, v in _XML_ATTR.findall(attrs))
+        name = el.split(":")[-1].lower()
+        if name == "item" and "name" in pairs:
+            out[f"xml.{pairs['name'].lower()}"] = pairs.get("value", "")
+            continue
+        for k, v in pairs.items():
+            if k.startswith("xmlns") or k in ("lastupdate",):
+                continue
+            out[f"xml.{name}.{k}"] = v
+        if len(out) > 400:
+            break
+    return out
+
+
 def probe(path: str | Path) -> dict[str, Any]:
     """Read container and stream metadata into one flat dict."""
     path = Path(path)
@@ -152,8 +220,14 @@ def probe(path: str | Path) -> dict[str, Any]:
     duration = float(v.get("duration") or fmt.get("duration") or 0.0)
     is_image = path.suffix.lower() in IMAGE_EXT or (fmt.get("format_name", "") in ("image2", "png_pipe", "jpeg_pipe", "tiff_pipe", "webp_pipe", "bmp_pipe"))
     color_range = v.get("color_range") or ("pc" if pix.startswith("yuvj") else "")
-    make = tags.get("com.apple.quicktime.make") or tags.get("make") or tags.get("com.android.manufacturer") or ""
-    model = tags.get("com.apple.quicktime.model") or tags.get("model") or tags.get("com.android.model") or ""
+    is_image_ext = path.suffix.lower() in IMAGE_EXT
+    if not is_image_ext:
+        for k, val in camera_xml_tags(path).items():
+            tags.setdefault(k, val)
+    make = (tags.get("com.apple.quicktime.make") or tags.get("make") or tags.get("com.android.manufacturer")
+            or tags.get("xml.device.manufacturer") or "")
+    model = (tags.get("com.apple.quicktime.model") or tags.get("model") or tags.get("com.android.model")
+             or tags.get("xml.device.modelname") or "")
     info = {
         "path": str(path),
         "name": path.name,

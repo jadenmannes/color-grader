@@ -3,7 +3,7 @@ import { api } from './api.js';
 
 const BLANK_PROFILE = () => ({
   name: 'Default', input: { type: 'curve', curve: '', gamut: '' }, bit_depth: 10, data_range: 'auto',
-  detect: { bit_depth: [], transfer: [], primaries: [], image: 'any' },
+  detect: { bit_depth: [], transfer: [], primaries: [], image: 'any', metadata: [] },
   corrections: { exposure: 0, temperature: 0, tint: 0, saturation: 1 },
 });
 const BLANK_CAMERA = () => ({ name: '', maker: '', metadata_names: [], notes: '', profiles: [BLANK_PROFILE()], definitions: { curves: {}, gamuts: {} } });
@@ -92,6 +92,10 @@ function ProfileEditor({ ctx, profile, index, open, onToggle, onChange, onRemove
           <div><label>The picture looks</label><select value=${profile.detect.image} onChange=${(e) => setDetect({ image: e.target.value })}>
             <option value="any">Either way</option><option value="log">Flat (log)</option><option value="display">Finished</option></select></div>
         </div>
+        <label>Metadata tags (any one settles the profile)</label>
+        <input type="text" value=${csv(profile.detect.metadata || [])} placeholder="xml.capturegammaequation=value"
+          onInput=${(e) => setDetect({ metadata: uncsv(e.target.value) })} />
+        <div class="hint">key=value checks one tag exactly. Plain text matches anywhere in the metadata. Camera XML settings appear as xml.* tags in the clip's metadata list.</div>
         <h3>Default corrections for every clip from this profile</h3>
         <div class="grid4">
           ${[['exposure', 'Exposure (stops)', 0.05], ['temperature', 'Temperature (+ warm)', 1], ['tint', 'Tint (+ magenta)', 1], ['saturation', 'Saturation (1 = none)', 0.01]].map(([k, name, step]) => html`

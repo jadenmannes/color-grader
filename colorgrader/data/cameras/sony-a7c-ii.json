@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "id": "sony-a7c-ii",
+  "name": "Sony A7C II",
+  "maker": "Sony",
+  "metadata_names": [
+    "ILCE-7CM2"
+  ],
+  "notes": "Sony writes the model and the picture profile into an XML file next to each clip (C0001M01.XML) and into the MP4 itself. Keep the XML next to the clip for the surest match. XAVC S 4K H.264 High profile is 8-bit 4:2:0. XAVC S 4K 4:2:2 10-bit and XAVC HS hold 10-bit.",
+  "profiles": [
+    {
+      "id": "s-log3-s-gamut3-cine",
+      "name": "S-Log3 / S-Gamut3.Cine",
+      "input": {
+        "type": "curve",
+        "curve": "sony-s-log3",
+        "gamut": "s-gamut3-cine"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          8,
+          10
+        ],
+        "transfer": [],
+        "primaries": [],
+        "image": "log",
+        "metadata": [
+          "xml.capturegammaequation=s-log3-cine",
+          "xml.capturecolorprimaries=s-gamut3cine",
+          "xml.capturecolorprimaries=s-gamut3-cine"
+        ]
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "s-log3-s-gamut3",
+      "name": "S-Log3 / S-Gamut3",
+      "input": {
+        "type": "curve",
+        "curve": "sony-s-log3",
+        "gamut": "s-gamut3"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          8,
+          10
+        ],
+        "transfer": [],
+        "primaries": [],
+        "image": "log",
+        "metadata": [
+          "xml.capturecolorprimaries=s-gamut3"
+        ]
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "hlg",
+      "name": "HLG",
+      "input": {
+        "type": "curve",
+        "curve": "hlg",
+        "gamut": "rec2020"
+      },
+      "bit_depth": 10,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          10
+        ],
+        "transfer": [],
+        "primaries": [],
+        "image": "any",
+        "metadata": [
+          "xml.capturegammaequation=hlg",
+          "xml.capturegammaequation=hlg1",
+          "xml.capturegammaequation=hlg2",
+          "xml.capturegammaequation=hlg3",
+          "xml.capturegammaequation=bt2100-hlg"
+        ]
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    },
+    {
+      "id": "standard",
+      "name": "Standard, S-Cinetone or Cine (Rec.709)",
+      "input": {
+        "type": "curve",
+        "curve": "rec709-gamma24",
+        "gamut": "rec709"
+      },
+      "bit_depth": 8,
+      "data_range": "auto",
+      "detect": {
+        "bit_depth": [
+          8,
+          10
+        ],
+        "transfer": [],
+        "primaries": [],
+        "image": "display",
+        "metadata": [
+          "xml.capturegammaequation=rec709",
+          "xml.capturegammaequation=s-cinetone",
+          "xml.capturegammaequation=itu709"
+        ]
+      },
+      "corrections": {
+        "exposure": 0.0,
+        "temperature": 0.0,
+        "tint": 0.0,
+        "saturation": 1.0
+      }
+    }
+  ]
+}
