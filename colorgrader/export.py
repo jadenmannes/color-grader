@@ -230,11 +230,43 @@ def export_luts(proj, folder: Path | None = None) -> dict[str, Any]:
 _filters: dict[str, bool] = {}
 
 
+def denoise_filter(amount: float, width: int) -> str:
+    """ffmpeg noise reduction for the camera signal. amount 0..1.
+
+    The frequency-domain filter keeps edges and texture while it removes noise, and it looks at the
+    frames before and after. Above 1440p it works on single frames: noise is finer there and the
+    temporal pass would halve the export speed.
+    """
+    if amount <= 0:
+        return ""
+    if has_filter("fftdnoiz"):
+        temporal = ":prev=1:next=1" if width <= 2560 else ""
+        return f"fftdnoiz=sigma={2.0 + 12.0 * amount:.2f}:amount=1:block=32:overlap=0.5{temporal}"
+    if has_filter("hqdn3d"):
+        return f"hqdn3d={1.5 + 5.0 * amount:.2f}:{3.0 + 6.0 * amount:.2f}:{3.0 + 10.0 * amount:.2f}:{4.0 + 10.0 * amount:.2f}"
+    return ""
+
+
+def denoise_chain(amount: float, width: int, info: dict[str, Any]) -> str:
+    """The noise reduction as an ffmpeg filter chain for this source, or "" when it does not apply."""
+    if amount <= 0 or info.get("is_rgb") or not str(info.get("pix_fmt", "")).startswith("yuv"):
+        return ""
+    chain = denoise_filter(amount, width)
+    if not chain:
+        return ""
+    # Averaging noise creates in-between values. A 16-bit buffer keeps them, so the cleaned picture holds
+    # smoother gradients than the source file: 8-bit skies come out without steps.
+    base = re.match(r"yuvj?(4\d\d)p", info["pix_fmt"])
+    if base and info.get("bit_depth", 8) < 16:
+        chain = f"format=yuv{base.group(1)}p16le,{chain}"
+    return chain
+
+
 def has_filter(name: str) -> bool:
     if name not in _filters:
         r = media.run([media.find_binary("ffmpeg"), "-hide_banner", "-filters"])
         text = r.stdout.decode(errors="replace")
-        for f in ("zscale", "lut3d", "blend", "noise", "gblur", "mergeplanes"):
+        for f in ("zscale", "lut3d", "blend", "noise", "gblur", "mergeplanes", "hqdn3d", "fftdnoiz"):
             _filters[f] = bool(re.search(rf"\s{f}\s", text))
     return _filters.get(name, False)
 
@@ -350,9 +382,16 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     sws_matrix = {"bt709": "bt709", "bt2020nc": "bt2020", "bt2020c": "bt2020", "bt601": "smpte170m", "smpte170m": "smpte170m", "bt470bg": "bt470bg"}[info["matrix"]]
     idt_full = proj.idt(clip)[0].full_range if clip.get("profile_id") else info["full_range"]
     rng_z, rng_s = ("full", "pc") if idt_full else ("limited", "tv")
+    dn, sharp, clar = pipeline.detail_values(finish)
     chain = []
-    if max_width and info["display_width"] > max_width:
+    scale_first = bool(max_width and info["display_width"] > max_width)
+    denoise = denoise_chain(dn, info["display_width"] if not preview else w, info)
+    if denoise and not preview:
+        chain.append(denoise)   # noise reduction on the camera signal, before any conversion
+    if scale_first:
         chain.append(f"scale={w}:{h}:flags=bicubic:in_range={rng_s}:out_range={rng_s}")
+    if denoise and preview:
+        chain.append(denoise)   # the small playback file cleans after scaling: same look, a fraction of the time
     if info["is_rgb"]:
         chain.append("format=gbrpf32le")
     elif use_z:
@@ -402,8 +441,26 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
         tail.append(f"zscale={undo}matrix=709:range=limited:dither=error_diffusion,format={f['pix']}")
     else:
         tail.append(f"scale=out_color_matrix=bt709:out_range=tv:sws_dither=ed:flags=accurate_rnd+full_chroma_int,format={f['pix']}")
-    tail.append(f"setparams=color_primaries=bt709:color_trc={trc}:colorspace=bt709:range=tv")
-    graph += f";[{last}]{','.join(tail)}[out]"
+    params = f"setparams=color_primaries=bt709:color_trc={trc}:colorspace=bt709:range=tv"
+    steps = []
+    s_sharp, s_clar = pipeline.detail_sigmas(w)
+    if clar > 0:
+        steps.append((s_clar, pipeline.clarity_gain(clar)))
+    if sharp > 0:
+        steps.append((s_sharp, pipeline.sharpen_gain(sharp)))
+    if steps and has_filter("gblur"):
+        # Unsharp masks on the finished luma: Y + k * (Y - blur). grainextract gives Y - blur + half,
+        # grainmerge at opacity k adds k * (difference). Chroma passes through untouched.
+        graph += f";[{last}]{','.join(tail)}[d0]"
+        for i, (sigma, k) in enumerate(steps):
+            a, b_, c, blur, diff, nxt = (f"d{i}{t}" for t in ("a", "b", "c", "blur", "diff", "n"))
+            graph += (f";[d{i}]split=3[{a}][{b_}][{c}];[{b_}]gblur=sigma={sigma:.3f}:steps=2:planes=1[{blur}];"
+                      f"[{a}][{blur}]blend=c0_mode=grainextract:c1_mode=normal:c2_mode=normal[{diff}];"
+                      f"[{c}][{diff}]blend=c0_mode=grainmerge:c0_opacity={min(k, 1.0):.4f}:c1_mode=normal:c2_mode=normal[d{i + 1}]")
+        graph += f";[d{len(steps)}]{params}[out]"
+    else:
+        tail.append(params)
+        graph += f";[{last}]{','.join(tail)}[out]"
     cmd = [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", *inputs, "-filter_complex", graph, "-map", "[out]"]
     codec = list(f["codec"])
     if f.get("x265") and w * h > 2560 * 1440:   # above 1440p the medium preset crawls: one step faster, same quality target

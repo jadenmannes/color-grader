@@ -49,7 +49,7 @@ A Python backend does all color math in 32-bit float with NumPy and colour-scien
 | 3 Shot match | per shot | Shots of one scene match each other. Different cameras match each other before the look. |
 | 4 Look | shared | Contrast, lift/gamma/gain, saturation, Lum vs Sat, hue curves. One look for all shots. |
 | 5 Skin | shared | Keeps skin on the skin tone line. |
-| 6 Finish | shared | Optional vignette and fine grain. |
+| 6 Finish | shared | Noise reduction, clarity and sharpening. Optional vignette and fine grain. |
 | 7 Output conversion | shared | To Rec.709 with Resolve's DaVinci tone mapping. |
 
 Every step uses standard grading controls with Resolve's own math. The values in the recipe are the values the app renders with.
@@ -57,6 +57,16 @@ Every step uses standard grading controls with Resolve's own math. The values in
 ### Matching a reference
 
 The app describes the reference in plain words and fits the shared look to its statistics: tonal spread, black level, color of shadows, midtones and highlights, saturation by tonal range, and palette. Brightness and color level follow the reference too. The Reference brightness slider on the Grade tab sets how far: 100 percent takes on the reference's midtone level (1.25 stops at most), 0 percent keeps your own exposure. When a reference asks for more than your footage carries, the app says why and builds the closest believable version. No pixel-by-pixel color transfer happens anywhere.
+
+### A finished picture
+
+A corrected picture is flat: blacks sit in gray, the top end stops short of white, noise shows. Three steps close the gap to a finished one.
+
+- **Punch** (Grade tab, default 70 percent): the finishing pass on tone. It sets the black point, opens the top end and adds midtone contrast with the look's own contrast, lift, gamma and gain. The brightest skin stays under 76 percent, so faces keep shape and color.
+- **Noise reduction**: cleans the camera signal before the grade, at 16-bit precision, with the frames before and after. 8-bit log footage gains smooth gradients from it. The first build switches it on for log footage.
+- **Clarity and sharpening**: wide and fine edge contrast on the finished luma. The first build sets both to a moderate level.
+
+The build never adds grain on its own. Grain stays a choice on the Grade tab. LUTs carry color only: noise reduction and sharpening live in the app's export and, as starting values, in the Resolve recipe.
 
 ### Looks with no reference
 

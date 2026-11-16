@@ -11,6 +11,7 @@ from ..analysis import names
 from ..analysis.neutral import estimate_cast, gains_from_cast
 from ..color import ops
 from ..color import working as W
+from .. import settings
 from . import balance, lookfit, match, model, pipeline, quality, reference, skin as skin_mod
 
 F32 = np.float32
@@ -362,7 +363,8 @@ class Builder:
             step = quality.tone_step(it["idt"], g, look, self.odt, it["cam_sat"], it["prof"].get("corrections"),
                                      it["clip"]["info"]["bit_depth"], src.get("min_code", 0.0), src.get("max_code", 1.0))
             rules = quality.check_shot(it["data"]["sample"], it["data"]["ypos"], it["skin"], g, look, self.odt, it["cam_sat"], src, flags,
-                                       it["wb"]["confidence"], step, it["clip"]["info"]["bit_depth"], grain_on)
+                                       it["wb"]["confidence"], step, it["clip"]["info"]["bit_depth"], grain_on,
+                                       float((finish.get("detail") or {}).get("denoise", 0)) >= 20)
             rules.append(quality.subtlety(look))
             out[s["id"]] = rules
         return out
@@ -470,10 +472,6 @@ class Builder:
                 self._balance(it)
             self._note("White balance refined in single shots: a cast remained on neutral objects.", "neutral")
             changed = True
-        if "banding" in failed and not (finish.get("grain") or {}).get("enabled"):
-            finish.setdefault("grain", {}).update({"enabled": True, "amount": 0.25, "size": 1.0})
-            self._note("Fine grain switched on: the grade stretches the source far enough to risk banding in skies and walls.", "banding")
-            changed = True
         return changed
 
     def scene_consistency(self, look: dict[str, Any]) -> dict[str, dict[str, str]]:
@@ -507,6 +505,21 @@ class Builder:
                                                      ("; ".join(problems) + ". Framing differences explain part of this.") if problems
                                                      else f"Matches the lead shot of scene {sc}.")
         return out
+
+
+def finish_tone(b: Builder, look: dict[str, Any], amount: float) -> dict[str, Any]:
+    """Run the finishing pass on the tone of a look and record what it did."""
+    from . import polish
+
+    skins = [b._di(it, "skin").astype(F32) for it in b.items if it["skin"] is not None]
+    out, info = polish.polish_tone(look, b.pooled_footage(), b.odt, amount, skins)
+    text = polish.describe(info)
+    if text:
+        reasons = dict(out.get("reasons") or {})
+        reasons["contrast"] = (reasons.get("contrast", "") + " " + text).strip()
+        out["reasons"] = reasons
+        b._note(text, "polish")
+    return out
 
 
 def enforce_rules(b: Builder, look: dict[str, Any], finish: dict[str, Any], strength: float) -> tuple[dict[str, Any], dict[str, list]]:
@@ -581,10 +594,18 @@ def build(proj, progress: Callable[[float, str], None] | None = None, refit: boo
     if ref and refit:
         b.say(0.5, "Matching the look to the reference")
         look = b.fit_reference(ref, proj.reference_arrays())
+        if not b.fit_info.get("same_content"):
+            look = finish_tone(b, look, float(st.get("polish", 70)) / 100.0)
     b.say(0.7, "Protecting skin")
     if not model.is_neutral_look(dict(look, skin={"hue_vs_hue": [], "hue_vs_sat": []})) or look.get("source") in ("reference", "suggestion", "saved"):
         look = b.apply_skin(look)
     finish = copy.deepcopy(st.get("finish") or model.neutral_finish())
+    finish.setdefault("detail", model.neutral_finish()["detail"])
+    if not st.get("detail_set") and settings.load().get("auto_detail", True):
+        # first build: a finished picture is clean and crisp. Noise reduction follows the noisiest source.
+        log = [it for it in b.items if getattr(it["idt"].curve, "kind", "") == "scene"]
+        finish["detail"] = model.default_detail(min((it["clip"]["info"]["bit_depth"] for it in log), default=10), bool(log))
+        st["detail_set"] = True
     strength = float(st.get("strength", 80)) / 100.0
     b.say(0.8, "Checking the quality rules")
     look, reports = enforce_rules(b, look, finish, strength)

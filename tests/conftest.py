@@ -23,9 +23,10 @@ def workdir(home) -> Path:
 
 @pytest.fixture(scope="session", autouse=True)
 def _seed():
-    from colorgrader import cameras
+    from colorgrader import cameras, settings
 
     cameras.seed()
+    settings.save({"auto_detail": False})   # tests set noise reduction and sharpening themselves
 
 
 @pytest.fixture()

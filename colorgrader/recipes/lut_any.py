@@ -58,6 +58,6 @@ def build(ctx: dict[str, Any]) -> dict[str, Any]:
         "groups": groups})
     sections.append({
         "id": "limits", "title": "4. Limits of the LUT route", "where": "",
-        "notes": ["Vignette and grain stay outside the LUT. Add them with your editor's own tools, or export the graded clip from this app.",
+        "notes": ["Vignette, grain, noise reduction and sharpening stay outside the LUT: a LUT changes color only. Add them with your editor's own tools, or export the graded clip from this app.",
                   "Rebuild the LUT set after you change the look or its strength."], "items": []})
     return {"editor": ID, "editor_name": NAME, "edition": "", "title": title, "intro": intro, "sections": sections}

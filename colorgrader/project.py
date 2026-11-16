@@ -4,6 +4,7 @@ State is plain JSON in the user folder. Pixel data sits in the cache folder.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
@@ -60,7 +61,8 @@ class Project:
         st = settings.load()
         return {"version": 1, "clips": [], "shots": [], "scenes": [], "reference": None,
                 "look": model.neutral_look(), "strength": int(st["look_strength"]),
-                "finish": model.neutral_finish(), "suggestions": [], "graded": False, "report": None}
+                "finish": model.neutral_finish(), "suggestions": [], "graded": False, "report": None,
+                "brightness": 100, "polish": 70}
 
     def _file(self) -> Path:
         return paths.sub("projects") / f"{self.name}.json"
@@ -333,13 +335,13 @@ class Project:
         return data
 
     # ------------------------------------------------------------- frames
-    def frame_signal(self, clip: dict[str, Any], t: float, width: int) -> tuple[np.ndarray, int, int]:
-        key = (clip["id"], round(float(t), 3), int(width))
+    def frame_signal(self, clip: dict[str, Any], t: float, width: int, prefilter: str = "") -> tuple[np.ndarray, int, int]:
+        key = (clip["id"], round(float(t), 3), int(width), prefilter)
         with self.lock:
             if key in self._frame_cache:
                 self._frame_cache.move_to_end(key)
                 return self._frame_cache[key]
-        val = media.read_frame(clip["info"], t, max_width=width)
+        val = media.read_frame(clip["info"], t, max_width=width, prefilter=prefilter)
         with self.lock:
             self._frame_cache[key] = val
             while len(self._frame_cache) > 16:
@@ -352,7 +354,17 @@ class Project:
         clip = self.clip(clip_id)
         info = clip["info"]
         width = int(width or settings.load()["preview_width"])
-        buf, w, h = self.frame_signal(clip, t, width)
+        finish = copy.deepcopy(self.state["finish"]) if stage == "graded" else None
+        prefilter = ""
+        if finish and not info["is_image"]:
+            # the viewer cleans the frame with the same filter as the export, so both show the same picture
+            from . import export
+
+            dn = pipeline.detail_values(finish)[0]
+            prefilter = export.denoise_chain(dn, info["display_width"], info) if dn > 0 else ""
+            if prefilter:
+                finish["detail"]["denoise"] = 0
+        buf, w, h = self.frame_signal(clip, t, width, prefilter)
         idt, prof = self.idt(clip) if stage != "source" or clip.get("profile_id") else (None, {})
         if stage == "source":
             fr = idt.full_range if idt is not None else None
@@ -363,7 +375,6 @@ class Project:
             shot = model.quantize_shot(self.shot(shot_id)["grade"])
         if look is None and stage == "graded":
             look = model.at_strength(self.state["look"], self.state["strength"] / 100.0)
-        finish = self.state["finish"] if stage == "graded" else None
         return pipeline.render(sig, idt, self.odt(), prof.get("corrections"), shot, look, finish, stage)
 
     # ---------------------------------------------------------- reference
@@ -420,6 +431,12 @@ class Project:
             self.state["brightness"] = int(min(100, max(0, round(float(brightness)))))
         self.touch()
 
+    def set_polish(self, polish: float) -> None:
+        """Strength of the finishing pass on tone, 0 to 100. Takes effect on the next build."""
+        with self.lock:
+            self.state["polish"] = int(min(100, max(0, round(float(polish)))))
+        self.touch()
+
     def set_look(self, look: dict[str, Any]) -> None:
         base = model.neutral_look()
         base.update({k: v for k, v in look.items() if k in base or k in ("reasons",)})
@@ -431,8 +448,14 @@ class Project:
         base = model.neutral_finish()
         for key in ("vignette", "grain"):
             base[key].update({k: v for k, v in (finish.get(key) or {}).items() if k in base[key]})
+        for k in base["detail"]:
+            try:
+                base["detail"][k] = int(min(100, max(0, round(float((finish.get("detail") or {}).get(k, 0))))))
+            except (TypeError, ValueError):
+                pass
         with self.lock:
             self.state["finish"] = base
+            self.state["detail_set"] = True
         self.touch()
 
     def set_shot_grade(self, shot_id: str, grade: dict[str, Any]) -> None:

@@ -210,6 +210,22 @@ def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     def add(label: str, title: str, tool: str, how: str = "", settings=None, curves=None, notes=None):
         nodes.append(node(f"T{len(nodes) + 1}", label, title, tool, how, settings, curves, notes))
 
+    detail = (ctx["finish"].get("detail") or {})
+    if detail.get("denoise", 0) > 0:
+        level = float(detail["denoise"])
+        if ctx["edition"] == "studio":
+            add("NR", "Noise reduction", "Motion Effects",
+                "Motion Effects palette. Zoom the viewer to 100% on a flat, dark area and raise the values until the noise calms down.",
+                [setting("Temporal NR Frames", "2", "The frames before and after share the same detail and different noise."),
+                 setting("Temporal Threshold, Luma and Chroma", f"start at {5 + level * 0.25:.0f}", "Set by eye. Too high smears movement."),
+                 setting("Spatial NR Mode", "Better", "Keeps edges and texture."),
+                 setting("Spatial Threshold, Luma", f"start at {2 + level * 0.12:.0f}", "Set by eye. Skin must keep its pores."),
+                 setting("Spatial Threshold, Chroma", f"start at {5 + level * 0.25:.0f}", "Color noise takes more reduction than luma noise.")],
+                notes=[f"The app cleans the camera signal at {level:.0f}% before the grade. Set by eye against Play graded in the app."])
+        else:
+            add("NR", "Noise reduction", "Not in the free edition", "",
+                [setting("Noise Reduction", "Needs Resolve Studio",
+                         f"The app cleans camera noise at {level:.0f}%. Two ways around it: export the graded clip from this app, or leave the noise in.")])
     if abs(look["contrast"] - 1.0) > 5e-4:
         add("CONTRAST", "Look contrast", "Primaries", ADJ_HOW, [
             setting("Contrast", num(look["contrast"], 3), why.get("contrast", "Contrast of the look.")),
@@ -294,6 +310,18 @@ def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
         setting("Apply Forward OOTF", "Off", "The display curve alone finishes the picture."),
         setting("Apply Inverse OOTF", "Off", "Same reason."),
     ], notes=[f"LUT route: {ctx['lut_names']['output']} on one node replaces OUT A and OUT B."])
+    sharp, clar = float(detail.get("sharpen", 0)), float(detail.get("clarity", 0))
+    if sharp > 0 or clar > 0:
+        items = []
+        if clar > 0:
+            items.append(setting("Midtone Detail (MD)", f"start at {clar * 0.6:.0f}",
+                                 f"Wide local contrast: shape for faces and buildings. The app runs clarity at {clar:.0f}%. Set by eye against the app preview."))
+        if sharp > 0:
+            items.append(setting("Blur palette, Radius", f"start at {0.50 - sharp * 0.0006:.2f}",
+                                 f"Below 0.50 the Blur palette sharpens. The app runs sharpening at {sharp:.0f}%. Set by eye at 100% zoom."))
+        add("DETAIL", "Clarity and sharpening", "Primaries and Blur",
+            "Midtone Detail sits on page 2 of the Primaries palette. The Blur palette holds Radius: link the three channels.",
+            items, notes=["Last node: sharpening works on the finished picture."])
     return nodes
 
 
@@ -359,7 +387,7 @@ def build(ctx: dict[str, Any]) -> dict[str, Any]:
         "id": "luts", "title": "4. LUT route",
         "where": "Export tab, Export LUT set. Copy the files into Resolve's LUT folder (Project Settings, Color Management, Open LUT Folder), then press Update Lists.",
         "notes": ["Each LUT replaces a group of nodes. The balance nodes stay: a LUT holds no per-shot values.",
-                  f"LUT size: {ctx['settings']['lut_size']} points per side. Vignette and grain stay outside the LUTs."],
+                  f"LUT size: {ctx['settings']['lut_size']} points per side. Vignette, grain, noise reduction and sharpening stay outside the LUTs."],
         "items": lut_items})
     sections.append({
         "id": "check", "title": "5. Check",

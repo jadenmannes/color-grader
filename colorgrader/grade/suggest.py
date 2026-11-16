@@ -238,6 +238,7 @@ def suggest(proj, progress: Callable[[float, str], None] | None = None, count: i
             continue
         say(0.35 + 0.6 * len(chosen) / count, f"Fitting {tpl['name']}")
         look, _ = fit_template(tpl, parts, skin)
+        look = auto.finish_tone(b, look, float(proj.state.get("polish", 70)) / 100.0 * float(tpl.get("finish", 1.0)))
         look = b.apply_skin(look)
         look, reports = auto.enforce_rules(b, look, finish, 1.0 if tpl.get("mono") else strength)
         failed = {(sid, r["id"]) for sid, rules in reports.items() for r in rules if r["status"] == "fail"} - base_fail

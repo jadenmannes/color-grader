@@ -19,6 +19,7 @@ DEFAULTS: dict[str, Any] = {
     "analysis_fps": 2.0,                # analysis frames per second (minimum 1)
     "preview_width": 1280,
     "export_folder": "",
+    "auto_detail": True,                # the first build sets noise reduction, sharpening and clarity
 }
 
 CHOICES = {
@@ -59,6 +60,8 @@ def save(values: dict[str, Any]) -> dict[str, Any]:
             continue
         if k in allowed and v not in allowed[k]:
             raise ValueError(f"{k}: pick one of {allowed[k]}")
+        if k == "auto_detail":
+            v = bool(v)
         if k == "export_folder":
             v = str(v or "").strip()
         if k == "look_strength":

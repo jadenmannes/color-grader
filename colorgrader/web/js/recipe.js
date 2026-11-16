@@ -123,7 +123,7 @@ export function ExportPanel({ ctx, clip }) {
       ${luts.files.map((f) => html`<div style="margin-bottom:6px"><div class="mono" style="word-break:break-all">${f.name}</div><div class="dim">${f.where}</div></div>`)}
     </div>`}
     <h3>Graded clip</h3>
-    <p class="dim">Renders at source resolution with the full grade, vignette and grain included. The file carries Rec.709 tags, so QuickTime, phones and YouTube show the same picture.</p>
+    <p class="dim">Renders at source resolution with the full grade, noise reduction, sharpening, vignette and grain included. The file carries Rec.709 tags, so QuickTime, phones and YouTube show the same picture.</p>
     <label>Format</label>
     <select value=${format} onChange=${(e) => setFormat(e.target.value)}>
       ${formats.map((f) => html`<option value=${f.id}>${f.name}</option>`)}</select>

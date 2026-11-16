@@ -127,10 +127,68 @@ def finish_stage(di: np.ndarray, finish: dict[str, Any], seed: int = 11) -> np.n
     return di
 
 
+_LUMA709 = np.array([0.2126, 0.7152, 0.0722], dtype=F32)
+
+
+def detail_values(finish: dict[str, Any] | None) -> tuple[float, float, float]:
+    """(denoise, sharpen, clarity) as 0..1."""
+    d = (finish or {}).get("detail") or {}
+    return tuple(float(np.clip(d.get(k, 0), 0, 100)) / 100.0 for k in ("denoise", "sharpen", "clarity"))
+
+
+def detail_sigmas(width: int) -> tuple[float, float]:
+    """Blur widths in pixels for sharpening and clarity. Both scale with the frame, so every size looks alike."""
+    return max(0.6, 1.0 * width / 1920.0), max(4.0, 0.022 * width)
+
+
+def sharpen_gain(amount: float) -> float:
+    return 0.9 * amount
+
+
+def clarity_gain(amount: float) -> float:
+    return 0.45 * amount
+
+
+def denoise_signal(sig: np.ndarray, amount: float) -> np.ndarray:
+    """Preview of the noise reduction on one source frame (H, W, 3). The export uses a temporal filter on the full clip."""
+    if sig.ndim != 3 or amount <= 0:
+        return sig
+    import cv2
+
+    scale = max(0.5, sig.shape[1] / 1920.0)
+    y = sig @ _LUMA709
+    chroma = sig - y[..., None]
+    chroma = cv2.GaussianBlur(chroma, (0, 0), (1.0 + 3.0 * amount) * scale)        # color noise: the eye never misses fine chroma
+    y2 = np.ascontiguousarray(y)
+    for _ in range(2):   # two gentle passes clean flat areas further and still stop at edges
+        y2 = cv2.bilateralFilter(y2, 7, 0.015 + 0.05 * amount, (1.2 + 2.0 * amount) * scale)
+    return (y2[..., None] + chroma).astype(F32)
+
+
+def detail_display(disp: np.ndarray, sharpen: float, clarity: float) -> np.ndarray:
+    """Clarity (wide local contrast) and sharpening on the display luma of a full frame. Colors keep their chroma."""
+    if disp.ndim != 3 or (sharpen <= 0 and clarity <= 0):
+        return disp
+    import cv2
+
+    s_sharp, s_clar = detail_sigmas(disp.shape[1])
+    y = np.ascontiguousarray(np.clip(disp, 0.0, 1.0) @ _LUMA709)
+    out = y
+    if clarity > 0:
+        out = out + F32(clarity_gain(clarity)) * (out - cv2.GaussianBlur(out, (0, 0), s_clar))
+        out = np.clip(out, 0.0, 1.0)
+    if sharpen > 0:
+        out = out + F32(sharpen_gain(sharpen)) * (out - cv2.GaussianBlur(out, (0, 0), s_sharp))
+    return (disp + (out - y)[..., None]).astype(F32)
+
+
 def render(signal_rgb: np.ndarray, idt: InputTransform, odt: OutputTransform, corrections: dict[str, Any] | None,
            shot: dict[str, Any] | None = None, look: dict[str, Any] | None = None, finish: dict[str, Any] | None = None,
            stage: str = "graded") -> np.ndarray:
     """Render display R'G'B' at a named stage: converted, balanced, graded."""
+    dn, sharp, clar = detail_values(finish if (stage == "graded" and shot is not None and look is not None) else None)
+    if dn > 0:
+        signal_rgb = denoise_signal(signal_rgb, dn)
     lin = camera_stage(signal_rgb, idt, corrections)
     cam_sat = camera_saturation(corrections)
     if stage == "converted" or shot is None:
@@ -142,7 +200,7 @@ def render(signal_rgb: np.ndarray, idt: InputTransform, odt: OutputTransform, co
     di = look_stage(di, look)
     if finish:
         di = finish_stage(di, finish)
-    return odt(di)
+    return detail_display(odt(di), sharp, clar)
 
 
 def to_jpeg(display_rgb: np.ndarray, quality: int = 92, seed: int = 1) -> bytes:

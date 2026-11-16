@@ -56,7 +56,14 @@ def neutral_finish() -> dict[str, Any]:
     return {
         "vignette": {"enabled": False, "amount": 0.25, "start": 0.45},  # amount: stops darker in the corners
         "grain": {"enabled": False, "amount": 0.35, "size": 1.0},     # amount: percent of signal
+        "detail": {"denoise": 0, "sharpen": 0, "clarity": 0},          # each 0..100, 0 = off
     }
+
+
+def default_detail(bit_depth: int, log_source: bool) -> dict[str, int]:
+    """Starting values for a finished picture. Log footage carries more noise, 8-bit log the most."""
+    denoise = (35 if bit_depth <= 8 else 20) if log_source else 0
+    return {"denoise": denoise, "sharpen": 30, "clarity": 25}
 
 
 def quantize_shot(shot: dict[str, Any]) -> dict[str, Any]:

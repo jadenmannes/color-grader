@@ -75,7 +75,8 @@
       "rolloff": {
         "shadows": 0.85,
         "highlights": 0.88
-      }
+      },
+      "finish": 0.6
     },
     {
       "id": "teal-orange",
@@ -234,7 +235,8 @@
       "rolloff": {
         "shadows": 0.9,
         "highlights": 0.92
-      }
+      },
+      "finish": 0.25
     },
     {
       "id": "vivid-travel",

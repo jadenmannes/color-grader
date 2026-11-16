@@ -329,3 +329,64 @@ def test_recipe_export_and_looks_api(client, workdir):
     assert client.get("/api/recipe").json()["editor"] == "lut"
     assert client.put("/api/settings", json={"target_editor": "premiere"}).status_code == 400
     client.put("/api/settings", json={"target_editor": "resolve"})
+
+
+def test_sharpening_and_clarity_match_between_preview_and_export(proj, workdir, tmp_path):
+    clip = build_graded(proj, workdir, "rx_detail.mov", frames_each=20, size=(640, 360))
+    shot = proj.shots_of(clip["id"])[0]
+    t = 0.5 * (shot["start"] + shot["end"])
+    soft = np.clip(proj.render_frame(clip["id"], t, "graded", 640, shot["id"]), 0, 1)
+    proj.set_finish({"detail": {"sharpen": 60, "clarity": 50, "denoise": 0}})
+    want = np.clip(proj.render_frame(clip["id"], t, "graded", 640, shot["id"]), 0, 1)
+    got, _ = _decode(export.render_clip(proj, clip["id"], tmp_path / "detail.mp4")["path"], t, 640)
+    edges = lambda im: float(np.abs(np.diff(im @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=1)).mean())
+    assert edges(want) > 1.15 * edges(soft)                       # visibly crisper
+    assert abs(edges(got) - edges(want)) < 0.12 * edges(want)     # the export sharpens as much as the preview
+    assert np.abs(got - want).mean() < 0.01
+    assert abs(got.mean() - soft.mean()) < 0.01                   # detail work never shifts brightness
+
+
+def test_noise_reduction_cleans_the_export(proj, workdir, tmp_path):
+    scene = synth.procedural_scene(640, 360)
+    clip = load_clip(proj, flog2_clip(workdir / "rx_noisy.mov", scenes=[scene], frames_each=25, size=(640, 360), noise=0.12, crf=4))
+    look = model.neutral_look()
+    look.update(LOOK)
+    look.update(name="Test look", source="saved")
+    proj.set_look(look)
+    auto.build(proj, refit=False)
+    shot = proj.shots_of(clip["id"])[0]
+    t = 0.5 * (shot["start"] + shot["end"])
+    wall = (slice(180, 200), slice(30, 120))                      # the flat gray wall of the test scene
+    noisy, _ = _decode(export.render_clip(proj, clip["id"], tmp_path / "noisy.mp4")["path"], t, 640)
+    proj.set_finish({"detail": {"denoise": 60}})
+    clean, _ = _decode(export.render_clip(proj, clip["id"], tmp_path / "clean.mp4")["path"], t, 640)
+    import cv2
+
+    def grit(im):   # pixel noise: what stays after removing the smooth part of the wall
+        y = np.ascontiguousarray(im[wall] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))
+        return float((y - cv2.GaussianBlur(y, (0, 0), 3.0)).std())
+
+    assert grit(clean) < 0.4 * grit(noisy)
+    assert abs(clean[wall].mean() - noisy[wall].mean()) < 0.01
+    proj.set_finish({"detail": {"denoise": 0}})
+    raw = np.clip(proj.render_frame(clip["id"], t, "graded", 640, shot["id"]), 0, 1)
+    proj.set_finish({"detail": {"denoise": 60}})
+    prev = np.clip(proj.render_frame(clip["id"], t, "graded", 640, shot["id"]), 0, 1)
+    assert grit(prev) < 0.6 * grit(raw)                           # the preview shows the cleaner picture too
+
+
+def test_first_build_sets_a_finished_picture(proj, workdir):
+    from colorgrader import settings
+
+    clip = load_clip(proj, flog2_clip(workdir / "rx_first.mov", frames_each=20))
+    settings.save({"auto_detail": True})
+    try:
+        auto.build(proj)
+        d = proj.state["finish"]["detail"]
+        assert d["sharpen"] > 0 and d["clarity"] > 0 and d["denoise"] > 0      # log footage: clean and crisp from the start
+        assert not proj.state["finish"]["grain"]["enabled"]                    # the build never adds grain on its own
+        proj.set_finish({"detail": {"sharpen": 0, "clarity": 0, "denoise": 0}})
+        auto.build(proj)
+        assert proj.state["finish"]["detail"] == {"denoise": 0, "sharpen": 0, "clarity": 0}   # your own values stay
+    finally:
+        settings.save({"auto_detail": False})

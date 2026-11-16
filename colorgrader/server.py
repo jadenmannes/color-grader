@@ -405,6 +405,12 @@ def set_brightness(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     return {"ok": True}
 
 
+@app.put("/api/grade/polish")
+def set_polish(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    project.get().set_polish(float(body.get("polish", 70)))
+    return {"ok": True}
+
+
 @app.put("/api/grade/look")
 def set_look(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     project.get().set_look(body.get("look") or {})
