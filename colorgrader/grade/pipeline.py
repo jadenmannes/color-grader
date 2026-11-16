@@ -85,11 +85,13 @@ def look_stage(di: np.ndarray, look: dict[str, Any]) -> np.ndarray:
     """Steps 5 and 6 on DaVinci Intermediate values."""
     di = ops.contrast(di, look["contrast"], look.get("pivot", model.PIVOT))
     di = ops.lggo(di, look["lift"], look["gamma"], look["gain"])
+    di = ops.tone_curve(di, look.get("tone_curve"))
     di = ops.saturation(di, look["saturation"])
     di = ops.hsl_curves(di, lum_vs_sat=look.get("lum_vs_sat"))
     di = ops.hsl_curves(di, hue_vs_sat=look.get("hue_vs_sat"), hue_vs_hue=look.get("hue_vs_hue"))
     skin = look.get("skin") or {}
     di = ops.hsl_curves(di, hue_vs_sat=skin.get("hue_vs_sat"), hue_vs_hue=skin.get("hue_vs_hue"))
+    di = ops.hsl_curves(di, sat_vs_lum=look.get("sat_vs_lum"))
     return ops.hsl_curves(di, sat_vs_sat=look.get("sat_vs_sat"))
 
 

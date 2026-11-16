@@ -62,7 +62,7 @@ The app describes the reference in plain words and fits the shared look to its s
 
 A corrected picture is flat: blacks sit in gray, the top end stops short of white, noise shows. Three steps close the gap to a finished one.
 
-- **Punch** (Grade tab, default 70 percent): the finishing pass on tone. It sets the black point, opens the top end and adds midtone contrast with the look's own contrast, lift, gamma and gain. The brightest skin stays under 76 percent, so faces keep shape and color.
+- **Punch** (Grade tab, default 70 percent): the finishing pass on tone. It sets the black point and opens the top end with the look's own contrast, lift, gamma and gain. A film-style curve then steepens the midtones and eases into black and white, so the picture gains depth with no new clipping. Color density (Sat vs Lum) makes strong colors a little darker and richer, the way film dye takes light away. The brightest skin stays under 76 percent, so faces keep shape and color.
 - **Noise reduction**: cleans the camera signal before the grade, at 16-bit precision, with the frames before and after. 8-bit log footage gains smooth gradients from it. The first build switches it on for log footage.
 - **Clarity and sharpening**: wide and fine edge contrast on the finished luma. The first build sets both to a moderate level.
 
@@ -126,9 +126,10 @@ Everything you own sits in `~/ColorGrader`: cameras, settings, saved looks, proj
 
 - The Resolve control math follows measured recreations of Resolve's tools (see `THIRD_PARTY.md`). Nobody has checked the recipe inside Resolve yet. Compare the Resolve viewer with the app on your first project. The LUT route carries the exact app result either way.
 - Resolve numbers the Input Hue of its hue curves on its own scale. The recipe places hue points by color name and by position between the six color buttons.
+- The film curve in the recipe is a point table for Resolve's Custom curve. Resolve draws its own spline between the points, and its Sat vs Lum math is unpublished, so both nodes need a check by eye. The LUT route is exact.
 - Vignette window shape and film grain have no typed values in Resolve. The recipe marks them as set by eye. Film Grain needs Resolve Studio.
 - The X-M5 profiles are built from Fujifilm's published F-Log and F-Log2 math. Detection of F-Log against F-Log2 from metadata is untested on real X-M5 files, so the app asks you to confirm the profile when the metadata leaves it open.
-- A 33-point LUT follows the grade within 0.2 percent on average on normal picture content (65 points: 0.05 percent). Its largest error sits in the deepest shadows of log footage and at the edge of the display gamut. The node recipe and the app's own export stay exact there.
+- A 33-point LUT follows the grade within 0.3 percent on average on normal picture content (65 points: about 0.05 percent). The film curve costs a small table a little accuracy. Its largest error sits in the deepest shadows of log footage and at the edge of the display gamut. The node recipe and the app's own export stay exact there.
 - HDR PQ clips convert through a display-to-scene step with no matching Resolve control. Use the input LUT for them.
 - The Windows and macOS start scripts are written but ran on Linux only so far.
 

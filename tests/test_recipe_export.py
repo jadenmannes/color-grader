@@ -15,6 +15,8 @@ from helpers import filmsim_clip, flog2_clip, load_clip
 
 LOOK = dict(contrast=1.12, lift=[0.004, 0.006, 0.012], gamma=[-0.010, -0.004, 0.006], gain=[1.02, 1.0, 0.985], saturation=47.0,
             lum_vs_sat=[[0.0, 0.8], [0.04, 0.9], [0.12, 1.0], [0.5, 1.0], [0.62, 0.95], [0.74, 0.9]],
+            tone_curve=[[0.0, 0.0], [0.03, 0.03], [0.22, 0.2], [0.35, 0.35], [0.5, 0.52], [0.75, 0.75], [1.0, 1.0]],
+            sat_vs_lum=[[0.0, 1.0], [0.08, 1.0], [0.16, 0.97], [0.26, 0.95], [1.0, 0.95]],
             hue_vs_sat=[[h, 0.92 if h == 120 else 1.0] for h in range(0, 360, 30)],
             hue_vs_hue=[[h, 4.0 if h == 210 else 0.0] for h in range(0, 360, 30)])
 
@@ -56,6 +58,10 @@ def _run_node(x, node):
     if "Sat" in s:
         x = ops.saturation(x, float(s["Sat"]))
     c = _curves(node)
+    if "Custom" in c:
+        x = ops.tone_curve(x, c["Custom"])
+    if "Sat vs Lum" in c:
+        x = ops.hsl_curves(x, sat_vs_lum=c["Sat vs Lum"])
     if "Lum vs Sat" in c:
         x = ops.hsl_curves(x, lum_vs_sat=c["Lum vs Sat"])
     if "Hue vs Sat" in c or "Hue vs Hue" in c:
@@ -194,7 +200,7 @@ def test_lut_set_matches_the_grade(proj, workdir, tmp_path):
     assert lut.size == 33
     want = np.clip(odt(pipeline.look_stage(di, look)), 0, 1)
     err = np.abs(lut.apply(di) - want)
-    assert err.mean() < 0.003 and np.percentile(err, 99) < 0.02
+    assert err.mean() < 0.004 and np.percentile(err, 99) < 0.02   # a curved tone curve costs a 33-point table a little
     lut = read_cube(files[names["look"]])
     assert np.abs(lut.apply(di) - np.clip(pipeline.look_stage(di, look), 0, 1)).mean() < 0.001
     # camera LUT: recorded signal straight to the graded display picture (no per-shot balance)

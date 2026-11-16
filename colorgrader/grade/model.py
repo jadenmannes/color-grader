@@ -48,6 +48,8 @@ def neutral_look() -> dict[str, Any]:
         "hue_vs_hue": [],   # [[hue degrees, rotation in degrees], ...]
         "skin": {"hue_vs_hue": [], "hue_vs_sat": []},
         "sat_vs_sat": [],   # [[input saturation 0..1, saturation multiplier], ...] limits extreme colors
+        "tone_curve": [],   # [[input, output], ...] custom curve on all channels: the film-style contrast curve
+        "sat_vs_lum": [],   # [[input saturation 0..1, luminance multiplier], ...] color density
         "reasons": {},
     }
 
@@ -93,6 +95,8 @@ def quantize_look(look: dict[str, Any]) -> dict[str, Any]:
     k["hue_vs_sat"] = _q_points(k.get("hue_vs_sat"), "curve_in")
     k["hue_vs_hue"] = _q_points(k.get("hue_vs_hue"), "curve_in", "curve_in")
     k["sat_vs_sat"] = _q_points(k.get("sat_vs_sat"), "lum_in")
+    k["tone_curve"] = _q_points(k.get("tone_curve"), "lum_in")
+    k["sat_vs_lum"] = _q_points(k.get("sat_vs_lum"), "lum_in")
     skin = k.get("skin") or {}
     k["skin"] = {"hue_vs_hue": _q_points(skin.get("hue_vs_hue"), "curve_in", "curve_in"),
                  "hue_vs_sat": _q_points(skin.get("hue_vs_sat"), "curve_in")}
@@ -112,6 +116,8 @@ def at_strength(look: dict[str, Any], strength: float) -> dict[str, Any]:
     k["hue_vs_sat"] = [[x, 1.0 + a * (v - 1.0)] for x, v in look.get("hue_vs_sat", [])]
     k["hue_vs_hue"] = [[x, a * v] for x, v in look.get("hue_vs_hue", [])]
     k["sat_vs_sat"] = [[x, 1.0 + a * (v - 1.0)] for x, v in look.get("sat_vs_sat", [])] if a > 0 else []
+    k["tone_curve"] = [[x, x + a * (v - x)] for x, v in look.get("tone_curve") or []] if a > 0 else []
+    k["sat_vs_lum"] = [[x, 1.0 + a * (v - 1.0)] for x, v in look.get("sat_vs_lum") or []] if a > 0 else []
     skin = look.get("skin") or {}
     k["skin"] = {"hue_vs_hue": [[x, a * v] for x, v in skin.get("hue_vs_hue", [])],
                  "hue_vs_sat": [[x, 1.0 + a * (v - 1.0)] for x, v in skin.get("hue_vs_sat", [])]}
@@ -122,7 +128,9 @@ def is_neutral_look(look: dict[str, Any]) -> bool:
     n = neutral_look()
     keys = ("contrast", "lift", "gamma", "gain", "saturation")
     flat = all(look.get(k) == n[k] for k in keys)
-    curves = all(abs(v - 1.0) < 1e-9 for _, v in look.get("lum_vs_sat", []) + look.get("hue_vs_sat", []) + look.get("sat_vs_sat", []))
+    curves = (all(abs(v - 1.0) < 1e-9 for _, v in look.get("lum_vs_sat", []) + look.get("hue_vs_sat", []) + look.get("sat_vs_sat", [])
+                  + (look.get("sat_vs_lum") or []))
+              and all(abs(v - x) < 1e-9 for x, v in look.get("tone_curve") or []))
     hue = all(abs(v) < 1e-9 for _, v in look.get("hue_vs_hue", []))
     skin = look.get("skin") or {}
     skin_ok = all(abs(v) < 1e-9 for _, v in skin.get("hue_vs_hue", [])) and all(abs(v - 1.0) < 1e-9 for _, v in skin.get("hue_vs_sat", []))

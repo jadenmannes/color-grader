@@ -517,6 +517,12 @@ def finish_tone(b: Builder, look: dict[str, Any], amount: float) -> dict[str, An
     if text:
         reasons = dict(out.get("reasons") or {})
         reasons["contrast"] = (reasons.get("contrast", "") + " " + text).strip()
+        if out.get("tone_curve"):
+            reasons["tone_curve"] = ("Film-style contrast: steeper midtones, soft ends. Black, middle and white keep their level, "
+                                     "so the picture gains depth with no new clipping.")
+        if out.get("sat_vs_lum"):
+            reasons["sat_vs_lum"] = ("Color density: strong colors get a little darker and richer, the way film dye takes light away. "
+                                     "Skin and gentle colors stay untouched.")
         out["reasons"] = reasons
         b._note(text, "polish")
     return out

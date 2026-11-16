@@ -240,6 +240,15 @@ def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
         tone.append(setting("Gain", rgb(look["gain"], 3), why.get("gain", "Highlight color of the look.")))
     if tone:
         add("TONE COLOR", "Shadow, midtone and highlight color", "Primaries", BARS_HOW, tone + [setting(*LUM_MIX)])
+    if look.get("tone_curve") and any(abs(v - x) > 5e-4 for x, v in look["tone_curve"]):
+        rows = [[num(x, 3), num(v, 3)] for x, v in look["tone_curve"]]
+        add("FILM CURVE", "Film-style contrast curve", "Curves", "", curves=[curve_table(
+            "Custom", ["Input", "Output"], rows,
+            why.get("tone_curve", "Steeper midtones with soft ends: contrast with no new clipping."),
+            "Curves palette, Custom, all channels ganged. Add one point per row and drag it until the readout shows both values. "
+            "On the 0 to 1 scale of the table, 0.5 is the center of the grid. Editable Splines must stay on.")],
+            notes=["Resolve draws its own spline through the points, so the curve between them differs slightly from the app. "
+                   "The LUT route carries the exact curve."])
     sat_items, sat_curves = [], []
     if abs(look["saturation"] - 50.0) > 0.05:
         sat_items.append(setting("Sat", num(look["saturation"], 1), why.get("saturation", "Overall saturation of the look.")))
@@ -261,6 +270,13 @@ def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     if sk:
         add("SKIN", "Skin protection", "Curves", "", curves=sk,
             notes=["Check on the vectorscope with the skin tone line switched on. Skin sits on the line."])
+    if not base.is_neutral_curve(look.get("sat_vs_lum"), 1.0):
+        rows = [[num(x, 3), num(v, 3)] for x, v in look["sat_vs_lum"]]
+        add("DENSITY", "Color density", "Curves", "", curves=[curve_table(
+            "Sat vs Lum", ["Input Sat", "Lum"], rows,
+            why.get("sat_vs_lum", "Strong colors get a little darker and richer. Skin and gentle colors stay untouched."),
+            "Curves palette, Sat vs Lum. Click the curve to add a point, then type both values in the fields below.")],
+            notes=["Resolve's own Sat vs Lum math is unpublished. Compare the strongest colors with the app and trim the last two points by eye."])
     if not base.is_neutral_curve(look.get("sat_vs_sat"), 1.0):
         rows = [[num(x, 3), num(v, 3)] for x, v in look["sat_vs_sat"]]
         add("LIMIT", "Saturation limit", "Curves", "", curves=[curve_table(

@@ -78,7 +78,9 @@ function LookTable({ look }) {
     ${row('Lift R G B', rgb(look.lift), r.lift)}
     ${row('Gamma R G B', rgb(look.gamma), r.gamma)}
     ${row('Gain R G B', rgb(look.gain), r.gain)}
+    ${(look.tone_curve || []).length ? row('Film curve', html`<${Points} pts=${look.tone_curve} />`, r.tone_curve) : ''}
     ${row('Saturation', fmt(look.saturation, 1), r.saturation)}
+    ${(look.sat_vs_lum || []).length ? row('Density', html`<${Points} pts=${look.sat_vs_lum.filter((p) => p[1] !== 1)} />`, r.sat_vs_lum) : ''}
     ${(look.lum_vs_sat || []).length ? row('Lum vs Sat', html`<${Points} pts=${look.lum_vs_sat} />`, r.lum_vs_sat) : ''}
     ${(look.hue_vs_sat || []).length ? row('Hue vs Sat', html`<${Points} pts=${look.hue_vs_sat.filter((p) => p[1] !== 1)} unit="°" />`, r.hue_vs_sat) : ''}
     ${(look.hue_vs_hue || []).length ? row('Hue vs Hue', html`<${Points} pts=${look.hue_vs_hue.filter((p) => p[1] !== 0)} unit="°" />`, r.hue_vs_hue) : ''}

@@ -191,7 +191,7 @@ def _solve(resid, x0: np.ndarray, lo: np.ndarray, hi: np.ndarray, iters: int = 1
 CARRY = {"spread": 0.7, "floor_up": 0.85, "floor_down": 0.4, "tints": 0.8, "sats": 0.85, "median": 0.7}
 # limits for different-content references, in fit units (contrast 0.82..1.45, lift -0.02..0.06, gamma +-0.06 ...)
 B_LO = np.array([-0.6, -0.67, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -1.3, -1.25, -1.25])
-B_HI = np.array([1.5, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 1.6, 0.0, 0.0])
+B_HI = np.array([0.85, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 1.6, 0.0, 0.0])
 
 
 def fit(footage_di: np.ndarray | list[np.ndarray], ref: dict[str, Any], ref_info: dict[str, Any] | None = None,

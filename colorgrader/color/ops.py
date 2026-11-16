@@ -165,14 +165,28 @@ def hsl_join(lum: np.ndarray, c1: np.ndarray, c2: np.ndarray) -> np.ndarray:
     return np.stack([r, g, b], axis=-1).astype(F32, copy=False)
 
 
-def hsl_curves(x: np.ndarray, hue_vs_hue=None, hue_vs_sat=None, lum_vs_sat=None, sat_vs_sat=None) -> np.ndarray:
-    """Hue vs Hue (degrees of rotation), Hue vs Sat, Lum vs Sat and Sat vs Sat (multipliers).
+def tone_curve(x: np.ndarray, points) -> np.ndarray:
+    """Custom curve, all channels ganged: one smooth monotone curve through (input, output) points.
+
+    Values outside the first and last point keep their distance to the curve ends, so nothing clips here.
+    """
+    if not points:
+        return x
+    lo, hi = min(p[0] for p in points), max(p[0] for p in points)
+    xc = np.clip(x, F32(max(lo, 0.0)), F32(min(hi, 1.0)))
+    return (eval_unit(points, xc, 0.0) + (x - xc)).astype(F32, copy=False)
+
+
+def hsl_curves(x: np.ndarray, hue_vs_hue=None, hue_vs_sat=None, lum_vs_sat=None, sat_vs_sat=None, sat_vs_lum=None) -> np.ndarray:
+    """Hue vs Hue (degrees of rotation), Hue vs Sat, Lum vs Sat, Sat vs Sat and Sat vs Lum (multipliers).
 
     Points are (input, value). Hue inputs are degrees on the usual color wheel.
     """
-    if not (hue_vs_hue or hue_vs_sat or lum_vs_sat or sat_vs_sat):
+    if not (hue_vs_hue or hue_vs_sat or lum_vs_sat or sat_vs_sat or sat_vs_lum):
         return x
     lum, c1, c2, hue, chroma = hsl_split(x)
+    if sat_vs_lum:
+        lum = lum * eval_unit(sat_vs_lum, chroma, 1.0)
     scale = np.ones_like(lum)
     if hue_vs_sat:
         scale = scale * eval_periodic(hue_vs_sat, hue, 1.0)
