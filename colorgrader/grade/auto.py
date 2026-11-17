@@ -439,7 +439,9 @@ class Builder:
                 self.apply_skin(look)
                 self._note("Look tints eased and the skin correction rebuilt: skin had left the skin tone line.", "skin_tint")
             changed = True
-        if "color_clip" in failed:
+        if "color_clip" in failed and self._ease_hue_moves(look):
+            changed = True   # rotated colors left the display range: smaller hue moves come before any loss of saturation
+        elif "color_clip" in failed:
             tags = {t for it in failed["color_clip"] for r in reports[it["shot"]["id"]] if r["id"] == "color_clip" for t in r.get("tags", [])}
             if "zero_bright" in tags:
                 # bright colors left the display gamut: one channel fell to zero. Less color in the highlights brings them back.
@@ -473,6 +475,22 @@ class Builder:
             self._note("White balance refined in single shots: a cast remained on neutral objects.", "neutral")
             changed = True
         return changed
+
+    def _ease_hue_moves(self, look: dict[str, Any]) -> bool:
+        """Shrink the hue moves and hue-wise saturation gains of the look. True when there was something to shrink."""
+        hvh = look.get("hue_vs_hue") or []
+        hvs = look.get("hue_vs_sat") or []
+        if max((abs(v) for _, v in hvh), default=0.0) < 3.0 and max((v for _, v in hvs), default=1.0) < 1.02:
+            return False
+        if self._start.get("hue_eases", 0) >= 2:   # two steps (half the move) and the colors still clip: the cause lies elsewhere
+            return False
+        self._start["hue_eases"] = self._start.get("hue_eases", 0) + 1
+        first = self._start.setdefault("hue_move", max((abs(v) for _, v in hvh), default=0.0))
+        look["hue_vs_hue"] = [[h, v * 0.7] for h, v in hvh]
+        look["hue_vs_sat"] = [[h, 1.0 + (v - 1.0) * 0.7 if v > 1.0 else v] for h, v in hvs]
+        now = max((abs(v) for _, v in look["hue_vs_hue"]), default=0.0)
+        self._note(f"Hue moves eased (largest from {first:.0f} to {now:.0f} degrees): strong colors left the display range when their hue turned.", "hue_move")
+        return True
 
     def scene_consistency(self, look: dict[str, Any]) -> dict[str, dict[str, str]]:
         """Rule: shots in one scene look filmed at the same moment."""
@@ -548,7 +566,9 @@ def enforce_rules(b: Builder, look: dict[str, Any], finish: dict[str, Any], stre
         if "highlights" in bad:
             look["gain"] = [1.0 + (g - 1.0) * 0.85 for g in look["gain"]]
             look["gamma"] = [g - 0.15 * max(float(np.mean(look["gamma"])), 0.0) for g in look["gamma"]]
-        if bad & {"saturation", "color_clip"}:
+        if "color_clip" in bad and b._ease_hue_moves(look):
+            pass
+        elif bad & {"saturation", "color_clip"}:
             look["saturation"] = 50.0 + (look["saturation"] - 50.0) * 0.85 if look["saturation"] > 50.5 else look["saturation"] - 1.0
         b.apply_skin(look)
         reports = b.check(look, strength, finish)

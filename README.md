@@ -72,6 +72,20 @@ The build never adds grain on its own. Grain stays a choice on the Grade tab. LU
 
 A build with no reference proposes three looks. The app reads the footage (brightness, contrast, color level, faces, sky, foliage, warm or cool palette), scores every look template, keeps the best of three different families, fits each to your footage and checks the quality rules. Each proposal shows a name, a one-line mood, a preview and the reason for the pick. The templates are data: `colorgrader/data/looks/suggestions.json`, plus an optional `suggestions.json` in `~/ColorGrader/looks`.
 
+### The Cinematic look
+
+Every proposal starts with **Cinematic**, a look built on the six-step colorist workflow: white balance, exposure, contrast, hue rotation, split tone, output conversion last.
+
+| Workflow step | In the app |
+| --- | --- |
+| White balance, exposure | Balance per shot, on linear light. Shots of one scene match on skin and neutral objects. |
+| Contrast on a soft S-curve | The film curve of the finishing pass (Punch). |
+| Hue rotation: blue to teal, green to yellow, yellow to orange, magenta to red | Hue vs Hue points of the look. Skin stays out of the move. |
+| Split tone: teal shadows, warm highlights | Lift and Gain per channel. |
+| Color Space Transform last | Output conversion at the end. Every control works in the wide log space before it. |
+
+The look sits in `colorgrader/data/looks/suggestions.json` with `"pinned": true`. Change its numbers there, or copy it into `~/ColorGrader/looks/suggestions.json` under a new id.
+
 ### Quality rules
 
 A grade fails when it breaks one of these. The build repairs failures on its own and lists every fix.

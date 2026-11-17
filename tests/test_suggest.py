@@ -83,8 +83,8 @@ def test_templates_are_data_in_the_user_folder(proj, workdir):
         assert "my-green" in [t["id"] for t in suggest.load_templates()]
         load(proj, workdir, "sg_custom.mov", day_scene())
         found = suggest.suggest(proj)
-        assert found[0]["id"] == "my-green"                       # the highest score comes first
-        lift = found[0]["look"]["lift"]
+        assert found[0]["id"] == "cinematic" and found[1]["id"] == "my-green"   # the pinned look leads, then the highest score
+        lift = found[1]["look"]["lift"]
         assert lift[1] > lift[0] and lift[1] > lift[2]            # green leads in the shadows
     finally:
         f.unlink()
@@ -106,7 +106,8 @@ def test_black_and_white_runs_at_full_strength(proj, workdir):
         found = suggest.suggest(proj)
     finally:
         f.unlink()
-    assert found[0]["id"] == mono["id"] and found[0]["strength"] == 100 and found[0]["look"]["saturation"] == 0.0
+    bw = next(f for f in found if f["id"] == mono["id"])
+    assert found.index(bw) <= 1 and bw["strength"] == 100 and bw["look"]["saturation"] == 0.0
     suggest.apply(proj, mono["id"])
     assert proj.state["strength"] == 100                          # part strength would leave color in a monochrome look
     with pytest.raises(KeyError):
@@ -135,3 +136,18 @@ def test_build_without_reference_proposes_looks(client, workdir):
     assert job["state"] == "done" and job["result"]["count"] == 3
     client.delete(f"/api/clips/{p.state['clips'][0]['id']}")
     assert client.get("/api/state").json()["project"]["suggestions"] == []        # suggestions belong to their footage
+
+
+def test_cinematic_look_follows_the_six_step_workflow(proj, workdir):
+    """The pinned Cinematic look: S-curve contrast, palette pulled toward teal and orange, teal shadows against warm highlights."""
+    load(proj, workdir, "sg_cine.mov", day_scene())
+    found = suggest.suggest(proj)
+    look = found[0]["look"]
+    assert found[0]["id"] == "cinematic"
+    assert look["tone_curve"]                                      # contrast comes from a soft S-curve
+    assert look["lift"][0] < look["lift"][1] and look["lift"][0] < look["lift"][2]    # red pulled down in the shadows: teal
+    assert look["gain"][2] < look["gain"][0]                       # blue pulled down in the highlights: warm
+    turn = {round(h): v for h, v in look["hue_vs_hue"]}
+    # blue turns toward teal, green toward yellow, magenta toward red. The test scene holds pure test colors,
+    # so the quality rules ease the size of the moves: the direction is what counts here.
+    assert turn.get(240, 0) < -0.5 and turn.get(120, 0) < -0.5 and turn.get(300, 0) > 0.5

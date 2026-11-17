@@ -217,7 +217,8 @@ def suggest(proj, progress: Callable[[float, str], None] | None = None, count: i
     say(0.32, "Reading the footage")
     b = auto.prepared_builder(proj)
     traits = scene_profile(b)
-    ranked = sorted(((score(t, traits), t) for t in load_templates()), key=lambda r: -r[0][0])
+    # pinned templates lead every proposal. The rest follow by how well they suit the footage.
+    ranked = sorted(((score(t, traits), t) for t in load_templates()), key=lambda r: (not r[1].get("pinned"), -r[0][0]))
     parts = b.pooled_footage(12000)
     skin = b.pooled_skin()
     finish = copy.deepcopy(proj.state.get("finish") or model.neutral_finish())
@@ -248,6 +249,8 @@ def suggest(proj, progress: Callable[[float, str], None] | None = None, count: i
             continue
         look = model.quantize_look(look) | {"reasons": look.get("reasons", {})}
         why = ("Suits this footage: " + ", ".join(TRAIT_WORDS.get(p, p) for p in pros) + ".") if pros else "A safe choice for any footage."
+        if tpl.get("why"):
+            why = tpl["why"] + (" " + why if pros else "")
         use = 1.0 if tpl.get("mono") else strength   # black and white means no color left: full strength
         try:
             img = proj.render_frame(lead["clip_id"], t_mid, "graded", 480, lead["id"], look=model.at_strength(look, use))

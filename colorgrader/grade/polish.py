@@ -66,8 +66,8 @@ def polish_tone(look: dict[str, Any], parts: list[np.ndarray], odt, amount: floa
     live = [p for p in parts if float(np.median(np.clip(odt(p), 0, 1) @ LUMA)) > 0.05]
     if a <= 0.0 or not live:
         return look, {"changed": False}
-    live = [p[:: max(1, len(p) // 3000)] for p in live]
-    skin_parts = [sk[:: max(1, len(sk) // 1500)] for sk in (skin_parts or []) if sk is not None and len(sk) >= 30]
+    live = [p[:: max(1, len(p) // 1200)] for p in live]
+    skin_parts = [sk[:: max(1, len(sk) // 600)] for sk in (skin_parts or []) if sk is not None and len(sk) >= 30]
     s0 = _stats(live, look, odt)
     skin0 = _skin_top(skin_parts, look, odt)
     black_goal = float(np.clip(s0["black"], BLACK_MIN, BLACK))        # deepen gray blacks, open crushed ones
@@ -98,7 +98,7 @@ def polish_tone(look: dict[str, Any], parts: list[np.ndarray], odt, amount: floa
                        (LIMITS["gamma"][1] - max(base["gamma"])) / 0.06, (LIMITS["gain"][1] / min(base["gain"]) - 1.0) / 0.1])
         lo, hi = np.minimum(lo, -1e-3), np.maximum(hi, 1e-3)
         # the solver takes its difference steps relative to x: it runs on x + 1, so a start at zero still moves
-        sol = least_squares(lambda u: resid(u - 1.0), np.ones(4), bounds=(lo + 1.0, hi + 1.0), diff_step=0.03, max_nfev=60)
+        sol = least_squares(lambda u: resid(u - 1.0), np.ones(4), bounds=(lo + 1.0, hi + 1.0), diff_step=0.03, max_nfev=30)
         return _apply(base, sol.x - 1.0)
 
     out = solve(look)

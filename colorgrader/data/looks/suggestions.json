@@ -7,9 +7,90 @@
     "saturation: color level against the balanced footage (1.0 keeps it). rolloff: saturation left in deep shadows and bright highlights.",
     "hue_vs_sat, hue_vs_hue: optional palette points [hue, value]. mono: true removes all color.",
     "base and suits: the score. base plus weight times trait, each trait runs 0..1:",
-    "skin, sky, foliage, daylight, low_key, high_key, flat, contrasty, colorful, muted, warm, cool."
+    "skin, sky, foliage, daylight, low_key, high_key, flat, contrasty, colorful, muted, warm, cool.",
+    "pinned: true puts a template first in every proposal, whatever the score.",
+    "finish: share of the finishing pass (Punch) this template takes, 0..1."
   ],
   "templates": [
+    {
+      "id": "cinematic",
+      "name": "Cinematic",
+      "family": "cinematic",
+      "pinned": true,
+      "mood": "The colorist workflow in six steps: clean balance, soft S-curve contrast, colors pulled toward teal and orange, teal shadows against warm highlights.",
+      "why": "The classic cinema palette. Two complementary colors, orange and teal, with skin kept natural.",
+      "contrast": 1.1,
+      "floor": 0.012,
+      "tints": {
+        "shadows": [
+          195,
+          0.02
+        ],
+        "midtones": [
+          30,
+          0.003
+        ],
+        "highlights": [
+          40,
+          0.016
+        ]
+      },
+      "saturation": 1.05,
+      "hue_vs_hue": [
+        [
+          240,
+          -18.0
+        ],
+        [
+          210,
+          -10.0
+        ],
+        [
+          120,
+          -14.0
+        ],
+        [
+          90,
+          -10.0
+        ],
+        [
+          60,
+          -10.0
+        ],
+        [
+          300,
+          16.0
+        ],
+        [
+          330,
+          8.0
+        ]
+      ],
+      "hue_vs_sat": [
+        [
+          180,
+          1.06
+        ],
+        [
+          210,
+          1.08
+        ],
+        [
+          240,
+          1.06
+        ]
+      ],
+      "rolloff": {
+        "shadows": 0.88,
+        "highlights": 0.88
+      },
+      "base": 0.5,
+      "suits": {
+        "skin": 0.3,
+        "sky": 0.1,
+        "daylight": 0.1
+      }
+    },
     {
       "id": "clean-natural",
       "name": "Clean natural",
@@ -81,7 +162,7 @@
     {
       "id": "teal-orange",
       "name": "Teal and orange",
-      "family": "contrast",
+      "family": "cinematic",
       "mood": "Cool teal shadows against warm skin and highlights. The modern cinema look.",
       "contrast": 1.12,
       "floor": 0.015,

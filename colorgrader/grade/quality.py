@@ -97,7 +97,9 @@ def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.nda
     if hi_new - ref_flags.get("zero_bright", 0.0) > 0.0015:
         tags.append("zero_bright")
         parts.append(f"the look drove one channel to zero in {hi_new * 100:.2f}% of pixels, all bright colors")
-    if mid_new - ref_flags.get("zero_mid", 0.0) > 0.004:
+    # Footage that already holds a color family at the gamut edge (a saturated blue wall, a neon sign) gains a few
+    # more such pixels under any look with color in it. The eye reads them as the same surface, so the allowance grows with it.
+    if mid_new - ref_flags.get("zero_mid", 0.0) > 0.004 + 0.2 * _zero_share(disp_b)[1]:
         tags.append("zero_mid")
         parts.append(f"the look drove one channel to zero in {mid_new * 100:.2f}% of pixels, all saturated colors")
     rule = _rule("color_clip", "No clipped colors", "fail" if tags else "pass",
