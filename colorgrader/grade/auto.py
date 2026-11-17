@@ -183,7 +183,10 @@ class Builder:
         holds little dark content still has a few. The top is the 99th percentile.
         """
         luma = np.array([0.2126, 0.7152, 0.0722], dtype=F32)
-        di = pipeline.shot_stage(it["data"]["sample"], grade, it["cam_sat"])
+        if "lvl_sample" not in it:   # 8000 pixels hold the darkest half percent well; the search measures many times
+            smp = it["data"]["sample"]
+            it["lvl_sample"] = smp[:: max(1, len(smp) // 8000)]
+        di = pipeline.shot_stage(it["lvl_sample"], grade, it["cam_sat"])
         if look is not None:
             di = pipeline.look_stage(di, look)
         signed = self.odt.signed(di) @ luma
@@ -252,7 +255,7 @@ class Builder:
                 touched = True
                 _, p1, p99 = self._shot_levels(it, it["grade"], look)
             if p1 > trigger:
-                di = pipeline.shot_stage(it["data"]["sample"], it["grade"], it["cam_sat"])
+                di = pipeline.shot_stage(it["lvl_sample"], it["grade"], it["cam_sat"])
                 piv = float(np.median(di.mean(axis=1)))
                 top = max(p99, 0.97)   # the tone mapping rolls the top off: room up to 97% stays clean
 
