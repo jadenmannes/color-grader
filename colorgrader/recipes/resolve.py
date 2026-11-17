@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..grade import pipeline
 from . import base
 from .base import curve_table, node, num, rgb, setting
 
@@ -226,6 +227,12 @@ def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
             add("NR", "Noise reduction", "Not in the free edition", "",
                 [setting("Noise Reduction", "Needs Resolve Studio",
                          f"The app cleans camera noise at {level:.0f}%. Two ways around it: export the graded clip from this app, or leave the noise in.")])
+    if abs(float(look.get("exposure", 0.0))) > 1e-9:
+        g = pipeline.exposure_gain(look["exposure"])
+        add("EXPOSURE", "Look exposure", "Primaries, node Gamma set to Linear",
+            "Right-click the node, Gamma, Linear. The node then works on linear light: black stays black, like HDR Global exposure. " + BARS_HOW,
+            [setting("Gain", rgb([g, g, g], 3), why.get("exposure", f"{look['exposure']:+.2f} stops for the whole look.")),
+             setting(*LUM_MIX)])
     if abs(look["contrast"] - 1.0) > 5e-4:
         add("CONTRAST", "Look contrast", "Primaries", ADJ_HOW, [
             setting("Contrast", num(look["contrast"], 3), why.get("contrast", "Contrast of the look.")),
@@ -259,6 +266,17 @@ def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
                                       "Curves palette, Lum vs Sat. Click the curve to add a point, then type both values in the fields below."))
     if sat_items or sat_curves:
         add("SATURATION", "Saturation and its roll-off", "Primaries and Curves", ADJ_HOW if sat_items else "", sat_items, sat_curves)
+    hs = look.get("hsv_sat") or {}
+    if abs(float(hs.get("gain", 1.0)) - 1.0) > 5e-4 or abs(float(hs.get("gamma", 0.0))) > 5e-4:
+        g, gm = float(hs.get("gain", 1.0)), float(hs.get("gamma", 0.0))
+        items = [setting("Node Color Space", "HSV", "Right-click the node, Color Space, HSV. Saturation then darkens colors as it adds, like film."),
+                 setting("Channels", "1 and 3 off", "Right-click the node, Channels: untick 1 and 3. Only saturation changes.")]
+        if abs(g - 1.0) > 5e-4:
+            items.append(setting("Gain", rgb([g, g, g], 3), why.get("hsv_gain", "Gain lifts the strongest colors most.")))
+        if abs(gm) > 5e-4:
+            items.append(setting("Gamma", rgb([gm, gm, gm], 3, signed=True), why.get("hsv_gamma", "Gamma lifts gentle colors such as skin most.")))
+        items.append(setting(*LUM_MIX))
+        add("SAT HSV", "Film-style saturation", "Primaries in an HSV node", BARS_HOW, items)
     pal = _hue_curves(look.get("hue_vs_sat"), look.get("hue_vs_hue"),
                       why.get("hue_vs_sat", "Color families trimmed toward the reference palette."),
                       why.get("hue_vs_hue", "Color families nudged toward the hues of the reference."))

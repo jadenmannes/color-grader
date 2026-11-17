@@ -1,12 +1,23 @@
 import { html, useState, useEffect } from '/static/vendor/htm-preact-standalone.js';
 import { api } from './api.js';
 
-// Three suggested looks for footage with no reference.
-export function SuggestedLooks({ ctx, onLive }) {
+function Steps({ steps }) {
+  if (!steps || !steps.length) return null;
+  return html`<details class="lr-steps" onClick=${(e) => e.stopPropagation()}>
+    <summary>Steps and values</summary>
+    ${steps.map((st) => html`<div class="lr-step"><b>${st.step}</b> <span class="mono">${st.value}</span><div class="dim">${st.why}</div></div>`)}
+  </details>`;
+}
+
+// Three looks designed from the selected shot.
+export function SuggestedLooks({ ctx, onLive, shot }) {
   const { state, runJob, notify, refresh } = ctx;
   const proj = state.project;
   const list = proj.suggestions || [];
-  const suggest = () => runJob(() => api.post('/api/suggestions', {}), 'Finding looks for your footage');
+  const read = proj.scene_read;
+  const target = shot || null;
+  const suggest = () => runJob(() => api.post('/api/suggestions', { shot_id: target ? target.id : null }),
+    target ? `Designing looks for shot ${target.index + 1}` : 'Designing looks for your footage');
   const apply = async (s) => {
     const done = await runJob(() => api.post(`/api/suggestions/${s.id}/apply`, {}), `Applying ${s.name}`);
     if (done) { await refresh(); onLive(); }
@@ -15,18 +26,21 @@ export function SuggestedLooks({ ctx, onLive }) {
   const current = proj.look && proj.look.source === 'suggestion' ? proj.look.name : null;
   return html`<div>
     <h3>Suggested looks</h3>
+    ${read && list.length > 0 && html`<div class="scene-read">
+      <div class="dim" style="margin-bottom:3px">Read from shot ${read.shot_index + 1} and the shots of its scene:</div>
+      ${read.lines.map((l) => html`<div>${l}</div>`)}</div>`}
     ${list.length === 0 && html`<div>
-      <p class="dim">${proj.reference ? 'Your reference drives the look. Suggestions offer three alternatives.' : 'No reference loaded. The app proposes three looks for this footage.'}</p>
-      <button onClick=${suggest}>Suggest three looks</button></div>`}
+      <p class="dim">${proj.reference ? 'Your reference drives the look. Suggestions offer three alternatives built from your shot.' : 'No reference loaded. The app reads the selected shot and designs three looks for it.'}</p>
+      <button onClick=${suggest}>${target ? `Design three looks for shot ${target.index + 1}` : 'Design three looks'}</button></div>`}
     ${list.length > 0 && html`<div>
       ${list.map((s) => html`
         <div class=${'look-row' + (current === s.name ? ' on' : '')} onClick=${() => apply(s)}>
           <img src=${`/api/suggestions/${s.id}/thumb.jpg?v=${s.stamp || 0}`} loading="lazy" />
           <div class="lr-body"><div class="lr-name">${s.name}${current === s.name ? html` <span class="badge ok">applied</span>` : ''}</div>
-            <div class="lr-mood">${s.mood}</div><div class="lr-why">${s.why}</div></div>
+            <div class="lr-mood">${s.mood}</div><div class="lr-why">${s.why}</div><${Steps} steps=${s.steps} /></div>
         </div>`)}
-      <div class="row" style="margin-top:6px"><span class="dim" style="flex:1">Click a look to apply it. Each one keeps your exposure and passes the quality rules on this footage.</span>
-        <button class="small ghost" onClick=${suggest}>Suggest again</button></div>
+      <div class="row" style="margin-top:6px"><span class="dim" style="flex:1">Click a look to apply it to every shot. Each shot keeps its own white balance, exposure and black point; every look passes the quality rules.</span>
+        <button class="small ghost" onClick=${suggest}>${target && read && target.id !== read.shot_id ? `Design for shot ${target.index + 1}` : 'Design again'}</button></div>
     </div>`}
   </div>`;
 }
@@ -71,7 +85,7 @@ export function SavedLooks({ ctx, onLive }) {
   </div>`;
 }
 
-export function LooksPanel({ ctx, onLive }) {
+export function LooksPanel({ ctx, onLive, shot }) {
   const withSuggestions = !!ctx.state.features && ctx.state.features.suggestions;
-  return html`<div>${withSuggestions ? html`<${SuggestedLooks} ctx=${ctx} onLive=${onLive} />` : ''}<${SavedLooks} ctx=${ctx} onLive=${onLive} /></div>`;
+  return html`<div>${withSuggestions ? html`<${SuggestedLooks} ctx=${ctx} onLive=${onLive} shot=${shot} />` : ''}<${SavedLooks} ctx=${ctx} onLive=${onLive} /></div>`;
 }

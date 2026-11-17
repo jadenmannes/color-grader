@@ -68,23 +68,35 @@ A corrected picture is flat: blacks sit in gray, the top end stops short of whit
 
 The build never adds grain on its own. Grain stays a choice on the Grade tab. LUTs carry color only: noise reduction and sharpening live in the app's export and, as starting values, in the Resolve recipe.
 
-### Looks with no reference
+### Three looks designed from your shot
 
-A build with no reference proposes three looks. The app reads the footage (brightness, contrast, color level, faces, sky, foliage, warm or cool palette), scores every look template, keeps the best of three different families, fits each to your footage and checks the quality rules. Each proposal shows a name, a one-line mood, a preview and the reason for the pick. The templates are data: `colorgrader/data/looks/suggestions.json`, plus an optional `suggestions.json` in `~/ColorGrader/looks`.
+Select a shot and press Design three looks. There is no preset list: the app reads that shot and the other shots of its scene, then builds every number of every look from what it measured. It is tuned for interviews shot outdoors.
 
-### The Cinematic look
+The scene read: the light the footage came in (soft and overcast, hard sun, low warm sun, the cast the balance removed in stops), the palette (autumn reds and yellows, greenery, sky), the faces (skin level on the waveform, distance from the skin tone line), the contrast, and how close the brightest tones sit to clipping.
 
-Every proposal starts with **Cinematic**, a look built on the six-step colorist workflow: white balance, exposure, contrast, hue rotation, split tone, output conversion last.
+The directions, chosen and tuned by that read:
 
-| Workflow step | In the app |
-| --- | --- |
-| White balance, exposure | Balance per shot, on linear light. Shots of one scene match on skin and neutral objects. |
-| Contrast on a soft S-curve | The film curve of the finishing pass (Punch). |
-| Hue rotation: blue to teal, green to yellow, yellow to orange, magenta to red | Hue vs Hue points of the look. Skin stays out of the move. |
-| Split tone: teal shadows, warm highlights | Lift and Gain per channel. |
-| Color Space Transform last | Output conversion at the end. Every control works in the wide log space before it. |
+| Look | Comes up when | Built from the shot |
+| --- | --- | --- |
+| Clean interview | Always, first | Contrast to a finished range, saturation lifted for quiet color or pulled back for loud color, greens a touch toward yellow when the shot holds them |
+| Warm autumn, Golden hour, Warm overcast, Warm daylight | Cool or gray light, autumn color, low sun | Warmth in the highlights scaled to how cool the light came in; leaves compressed to orange when the shot holds them |
+| Cinematic teal and orange | Faces against sky, blue tones or a busy background | Hue compression only for colors the shot holds, teal shadows, warm highlights, a slightly darker exposure |
+| Rich and moody | Flat light, bright backgrounds | Lower exposure, denser HSV saturation, quieter greens, deep blacks |
+| Bright and airy | Soft light with room above the brightest tones | A lift sized to that room, lifted shadows, pastel color |
 
-The look sits in `colorgrader/data/looks/suggestions.json` with `"pinned": true`. Change its numbers there, or copy it into `~/ColorGrader/looks/suggestions.json` under a new id.
+Each look lists the colorist workflow with its values and reasons: 1 white balance, 2 exposure, 3 contrast, 4 saturation, 5 hue rotation, 6 split tone, 7 output. Steps 1 and 2 stay per shot; the look carries the rest, so every shot of the interview matches.
+
+Every shot also gets its own black point and contrast (the clip-level EXP/CON step): haze comes off in linear light, crushed blacks open, and a flat shot gets contrast around its own middle so its exposure stays. Once a look is on, each shot is trimmed again under it, so one dark or hazy shot never shifts the rest.
+
+### Tools from the colorist workflow
+
+- **White balance and exposure** on a node in linear gamma with Gain: blacks stay black, the way HDR Global exposure behaves.
+- **Contrast** at pivot 0.336 (middle gray of DaVinci Intermediate) plus a film curve.
+- **Saturation** in an HSV node with channels 1 and 3 off: Gain lifts strong colors, Gamma lifts gentle colors such as skin, and colors get denser as they saturate, like film.
+- **Hue rotation** with Hue vs Hue curves, **split tone** with Lift and Gain per channel.
+- The recipe lists each of these as its own node with exact values. The app renders with the same numbers.
+
+The old template file `colorgrader/data/looks/suggestions.json` stays for template authors (`suggest.suggest_from_templates`). The app no longer proposes from it.
 
 ### Quality rules
 

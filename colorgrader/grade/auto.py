@@ -36,11 +36,11 @@ class Builder:
 
     def snapshot(self) -> list[dict[str, Any]]:
         """The per-shot state a rule fix may change. restore() puts it back (look suggestions try several looks)."""
-        keys = ("grade", "trim", "cast", "trim_reason", "skin_tight", "skin_info")
+        keys = ("grade", "trim", "cast", "trim_reason", "skin_tight", "skin_info", "haze")
         return [{k: copy.deepcopy(it[k]) for k in keys if k in it} for it in self.items]
 
     def restore(self, snap: list[dict[str, Any]]) -> None:
-        keys = ("grade", "trim", "cast", "trim_reason", "skin_tight", "skin_info")
+        keys = ("grade", "trim", "cast", "trim_reason", "skin_tight", "skin_info", "haze")
         for it, saved in zip(self.items, snap):
             for k in keys:
                 it.pop(k, None)
@@ -87,6 +87,12 @@ class Builder:
             it["grade"]["reasons"]["match"] = match_reason
         if it.get("trim_reason"):
             it["grade"]["reasons"]["gain"] += " " + it["trim_reason"]
+        if it.get("haze"):   # veiling light removed by shot_contrast: kept through every later re-balance
+            pts = it["haze"] / ops.OFFSET_UNIT
+            it["grade"]["balance"]["offset"] = [round(v - pts, 2) for v in it["grade"]["balance"]["offset"]]
+            it["grade"]["reasons"]["offset"] = it["grade"]["reasons"].get("offset", "") + (
+                f" Haze removed: {pts:.2f} Offset points on linear light." if pts > 0 else
+                f" Crushed blacks opened: {-pts:.2f} Offset points on linear light.")
 
     def _di(self, it: dict[str, Any], what: str = "sample") -> np.ndarray:
         arr = it["data"][what] if what != "skin" else it["skin"]
@@ -169,6 +175,127 @@ class Builder:
                 if why:
                     m["grade"]["reasons"]["match"] = f"Contrast {c:.2f}, saturation {s:.2f}: {why}."
                 m["grade"] = model.quantize_shot(m["grade"])
+
+    def _shot_levels(self, it: dict[str, Any], grade: dict[str, Any], look: dict[str, Any] | None) -> tuple[float, float, float]:
+        """Black level (signed and clipped) and top of display luma for one shot.
+
+        Black is the darkest half percent: haze lifts even the darkest pixels, while a frame that simply
+        holds little dark content still has a few. The top is the 99th percentile.
+        """
+        luma = np.array([0.2126, 0.7152, 0.0722], dtype=F32)
+        di = pipeline.shot_stage(it["data"]["sample"], grade, it["cam_sat"])
+        if look is not None:
+            di = pipeline.look_stage(di, look)
+        signed = self.odt.signed(di) @ luma
+        clipped = np.clip(signed, 0.0, 1.0)
+        return float(np.percentile(signed, 0.5)), float(np.percentile(clipped, 0.5)), float(np.percentile(clipped, 99.0))
+
+    def _with_offset(self, it: dict[str, Any], d: float) -> dict[str, Any]:
+        g = copy.deepcopy(it["grade"])
+        g["balance"]["offset"] = [v - d / ops.OFFSET_UNIT for v in g["balance"]["offset"]]
+        return g
+
+    def shot_contrast(self, look: dict[str, Any] | None = None, black_target: float = 0.035, trigger: float = 0.08,
+                      limit: float = 1.3) -> int:
+        """Per shot, the EXP/CON step: every shot's black point lands near the same level.
+
+        Hazy or flat shots: the veil comes off in linear light (Offset on the linear node), then contrast of
+        their own, around the shot's own middle, so exposure stays. Crushed shots: a small Offset brings the
+        darkest detail back. With `look`, the levels are measured under the look: the trim a colorist does per
+        shot once the look is on. Returns the number of shots changed.
+        """
+        changed = 0
+        haze_target = 0.05
+        if look is not None:
+            # under a look the shots match each other: the look decides how deep or lifted blacks are
+            levels = [self._shot_levels(it, it["grade"], look) for it in self.items]
+            black_target = max(float(np.median([lv[1] for lv in levels])), 0.01)
+            signed_median = float(np.median([lv[0] for lv in levels]))
+            trigger = black_target + 0.03
+            haze_target = black_target + 0.015
+        for it in self.items:
+            if it["finished"]:
+                continue
+            signed_p1, p1, p99 = self._shot_levels(it, it["grade"], look)
+            touched = False
+            # crushed: under a look only a shot darker than the others counts; deep blacks every shot shares belong to the look
+            if signed_p1 < -0.002 and (look is None or signed_p1 < signed_median - 0.015):
+                lo_d, hi_d = -0.006, 0.0          # negative d raises the black
+                for _ in range(12):
+                    mid_d = 0.5 * (lo_d + hi_d)
+                    if self._shot_levels(it, self._with_offset(it, mid_d), look)[0] < 0.008:
+                        hi_d = mid_d
+                    else:
+                        lo_d = mid_d
+                if lo_d < -0.00005:
+                    it["haze"] = float(it.get("haze", 0.0)) + lo_d
+                    self._balance(it)
+                    changed += 1
+                continue
+            if p1 <= trigger:
+                continue
+            first_p1 = p1
+            # haze is light laid over the whole picture: take it away in linear light first
+            lo_d, hi_d = 0.0, 0.045
+            if self._shot_levels(it, self._with_offset(it, hi_d), look)[1] > haze_target:
+                lo_d = hi_d
+            else:
+                for _ in range(14):
+                    mid_d = 0.5 * (lo_d + hi_d)
+                    if self._shot_levels(it, self._with_offset(it, mid_d), look)[1] > haze_target:
+                        lo_d = mid_d
+                    else:
+                        hi_d = mid_d
+            if lo_d > 0.0005:
+                it["haze"] = float(it.get("haze", 0.0)) + lo_d
+                self._balance(it)
+                touched = True
+                _, p1, p99 = self._shot_levels(it, it["grade"], look)
+            if p1 > trigger:
+                di = pipeline.shot_stage(it["data"]["sample"], it["grade"], it["cam_sat"])
+                piv = float(np.median(di.mean(axis=1)))
+                top = max(p99, 0.97)   # the tone mapping rolls the top off: room up to 97% stays clean
+
+                def levels(c: float) -> tuple[float, float]:
+                    g = copy.deepcopy(it["grade"])
+                    m0 = g["match"]
+                    tot = float(m0["contrast"]) * c
+                    ic = float(m0.get("pivot", model.PIVOT)) * c * (1.0 - float(m0["contrast"])) + piv * (1.0 - c)
+                    m0["contrast"], m0["pivot"] = tot, (ic / (1.0 - tot) if abs(1.0 - tot) > 1e-6 else model.PIVOT)
+                    _, b_lvl, t_lvl = self._shot_levels(it, g, look)
+                    return b_lvl, t_lvl
+
+                lo_c, hi_c = 1.0, limit
+                if levels(hi_c)[0] > black_target and levels(hi_c)[1] <= top + 0.005:
+                    lo_c = hi_c
+                else:
+                    for _ in range(14):
+                        mid_c = 0.5 * (lo_c + hi_c)
+                        b_lvl, t_lvl = levels(mid_c)
+                        if b_lvl > black_target and t_lvl <= top + 0.005:
+                            lo_c = mid_c
+                        else:
+                            hi_c = mid_c
+                c1 = lo_c
+                if c1 >= 1.02:
+                    m = it["grade"]["match"]
+                    c0, p0 = float(m["contrast"]), float(m.get("pivot", model.PIVOT))
+                    total = c0 * c1
+                    icept = p0 * c1 * (1.0 - c0) + piv * (1.0 - c1)      # two contrasts in a row are one contrast around a new pivot
+                    m["contrast"] = total
+                    m["pivot"] = icept / (1.0 - total) if abs(1.0 - total) > 1e-6 else model.PIVOT
+                    after = self._shot_levels(it, it["grade"], look)[1]
+                    note = (f"Contrast {total:.2f} at pivot {m['pivot']:.3f}: blacks of this shot sat at {first_p1 * 100:.0f}% "
+                            f"(haze or flat light), now {after * 100:.0f}%. Midtones and brightest tones stay.")
+                    old = it["grade"]["reasons"].get("match")
+                    it["grade"]["reasons"]["match"] = (old + " " + note) if old and note not in old else note
+                    it["grade"] = model.quantize_shot(it["grade"])
+                    touched = True
+            changed += int(touched)
+        if changed:
+            self._note(f"Black point and contrast set per shot in {changed} shot{'s' if changed > 1 else ''}: "
+                       "blacks sat in gray (haze, flat light) or under black.", "shot_contrast")
+        return changed
 
     def pooled_footage(self, n_total: int = 24000) -> list[np.ndarray]:
         """One balanced sample per shot. The look fit measures each shot on its own."""
@@ -596,6 +723,7 @@ def prepared_builder(proj, progress: Callable[[float, str], None] | None = None)
     b.scenes()
     b.camera_match()
     b.skin_trims()
+    b.shot_contrast()
     return b
 
 
@@ -614,6 +742,7 @@ def build(proj, progress: Callable[[float, str], None] | None = None, refit: boo
     b.scenes()
     b.camera_match()
     b.skin_trims()
+    b.shot_contrast()
     st = proj.state
     look = copy.deepcopy(st.get("look") or model.neutral_look())
     ref = st.get("reference")
@@ -633,6 +762,9 @@ def build(proj, progress: Callable[[float, str], None] | None = None, refit: boo
         finish["detail"] = model.default_detail(min((it["clip"]["info"]["bit_depth"] for it in log), default=10), bool(log))
         st["detail_set"] = True
     strength = float(st.get("strength", 80)) / 100.0
+    if not (getattr(b, "fit_info", None) or {}).get("same_content"):   # a graded copy of a shot defines that shot in full
+        b.say(0.78, "Trimming each shot under the look")
+        b.shot_contrast(model.at_strength(look, strength))
     b.say(0.8, "Checking the quality rules")
     look, reports = enforce_rules(b, look, finish, strength)
     scene_rules = b.scene_consistency(model.at_strength(look, strength))

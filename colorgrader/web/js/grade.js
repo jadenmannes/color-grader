@@ -78,9 +78,11 @@ function LookTable({ look }) {
     ${row('Lift R G B', rgb(look.lift), r.lift)}
     ${row('Gamma R G B', rgb(look.gamma), r.gamma)}
     ${row('Gain R G B', rgb(look.gain), r.gain)}
+    ${look.exposure ? row('Exposure', `${look.exposure > 0 ? '+' : ''}${fmt(look.exposure, 2)} stops on a linear node`, r.exposure) : ''}
     ${(look.tone_curve || []).length ? row('Film curve', html`<${Points} pts=${look.tone_curve} />`, r.tone_curve) : ''}
     ${row('Saturation', fmt(look.saturation, 1), r.saturation)}
     ${(look.sat_vs_lum || []).length ? row('Density', html`<${Points} pts=${look.sat_vs_lum.filter((p) => p[1] !== 1)} />`, r.sat_vs_lum) : ''}
+    ${look.hsv_sat && (look.hsv_sat.gain !== 1 || look.hsv_sat.gamma !== 0) ? row('HSV saturation', `Gain ${fmt(look.hsv_sat.gain, 3)}   Gamma ${fmt(look.hsv_sat.gamma, 3)}`, r.hsv_gain) : ''}
     ${(look.lum_vs_sat || []).length ? row('Lum vs Sat', html`<${Points} pts=${look.lum_vs_sat} />`, r.lum_vs_sat) : ''}
     ${(look.hue_vs_sat || []).length ? row('Hue vs Sat', html`<${Points} pts=${look.hue_vs_sat.filter((p) => p[1] !== 1)} unit="°" />`, r.hue_vs_sat) : ''}
     ${(look.hue_vs_hue || []).length ? row('Hue vs Hue', html`<${Points} pts=${look.hue_vs_hue.filter((p) => p[1] !== 0)} unit="°" />`, r.hue_vs_hue) : ''}
@@ -153,7 +155,7 @@ function GradeTab({ ctx, shot, onLive }) {
           onChange=${(e) => changePolish(parseInt(e.target.value, 10))} />
         <div class="dim">The finishing pass: deep blacks, bright top end, more midtone contrast. 0% leaves the tone exactly as the reference or look sets it. Release the slider to rebuild${proj.reference ? '' : ' the suggested looks'}.</div>
       </div>
-      <${LooksPanel} ctx=${ctx} onLive=${onLive} />
+      <${LooksPanel} ctx=${ctx} onLive=${onLive} shot=${shot} />
       ${proj.graded && html`
         <h3>Look strength: ${strength}%</h3>
         <input type="range" min="0" max="100" value=${strength} onInput=${(e) => changeStrength(parseInt(e.target.value, 10))} />
@@ -179,7 +181,7 @@ function GradeTab({ ctx, shot, onLive }) {
           <span class="mono" style="width:74px">${fin.grain.amount.toFixed(2)}%</span></div>
       `}
       ${proj.graded && shot && g && html`
-        <h3>Shot ${shot.index + 1}: balance and match</h3>
+        <h3>Shot ${shot.index + 1}: white balance, exposure, black point, contrast</h3>
         <div class="row" style="margin-bottom:6px"><span>Scene</span>
           <input type="number" min="1" style="width:64px" value=${shot.scene} onChange=${async (e) => { await api.put(`/api/shots/${shot.id}/scene`, { scene: parseInt(e.target.value, 10) || 1 }); refresh(); }} />
           ${shot.is_lead ? html`<span class="badge">lead shot of its scene</span>` : ''}

@@ -639,13 +639,15 @@ def apply_look(look_id: str) -> dict[str, Any]:
 
 # ------------------------------------------------------- suggested looks
 @app.post("/api/suggestions")
-def make_suggestions() -> dict[str, Any]:
+def make_suggestions(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     from .grade import suggest
 
     p = project.get()
     if not p.state["shots"]:
         raise _err(ValueError("Analyze at least one clip first."))
-    return {"job": jobs.start("suggest", lambda progress: {"count": len(suggest.suggest(p, progress))}, "Finding looks for your footage")}
+    shot_id = body.get("shot_id") or None
+    return {"job": jobs.start("suggest", lambda progress: {"count": len(suggest.suggest(p, progress, shot_id=shot_id))},
+                              "Designing looks for this shot")}
 
 
 @app.get("/api/suggestions/{sid}/thumb.jpg")

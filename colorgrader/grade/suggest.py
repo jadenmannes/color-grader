@@ -124,8 +124,12 @@ def _hue_curve(points, neutral: float, skin_hue: float | None) -> list[list[floa
     return [[float(c), float(v)] for c, v in zip(centers, vals)]
 
 
-def fit_template(template: dict[str, Any], parts: list[np.ndarray], skin: np.ndarray | None) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Turn a template into a look for this footage. Returns (look, fit info)."""
+def fit_template(template: dict[str, Any], parts: list[np.ndarray], skin: np.ndarray | None,
+                 adapt: bool = True) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Turn a template into a look for this footage. Returns (look, fit info).
+
+    adapt=False takes the contrast ratio as given: the caller already measured the footage.
+    """
     bounds, start = [], 0
     for part in parts:
         bounds.append((start, start + len(part)))
@@ -133,7 +137,9 @@ def fit_template(template: dict[str, Any], parts: list[np.ndarray], skin: np.nda
     f0 = lookfit.features_multi(np.concatenate(parts), bounds)
     spread = float(f0["spread"][1])
     ratio = float(template.get("contrast", 1.0))
-    if ratio >= 1.0:   # footage with strong contrast takes less on top, flat footage takes more
+    if not adapt:
+        pass
+    elif ratio >= 1.0:   # footage with strong contrast takes less on top, flat footage takes more
         ratio = 1.0 + (ratio - 1.0) * float(np.clip((0.52 - spread) / 0.16, 0.25, 1.3))
     else:              # flat footage takes less softening
         ratio = 1.0 - (1.0 - ratio) * float(np.clip((spread - 0.22) / 0.16, 0.3, 1.2))
@@ -209,8 +215,16 @@ def thumb_path(suggestion_id: str):
     return d / f"{paths.safe_id(suggestion_id)}.jpg"
 
 
-def suggest(proj, progress: Callable[[float, str], None] | None = None, count: int = 3) -> list[dict[str, Any]]:
-    """Find `count` looks that suit the footage. Stores them in the project and returns them."""
+def suggest(proj, progress: Callable[[float, str], None] | None = None, count: int = 3,
+            shot_id: str | None = None) -> list[dict[str, Any]]:
+    """Three looks designed from the scene of a shot (see design.py). Stores them in the project and returns them."""
+    from . import design
+
+    return design.propose(proj, progress, count, shot_id)
+
+
+def suggest_from_templates(proj, progress: Callable[[float, str], None] | None = None, count: int = 3) -> list[dict[str, Any]]:
+    """Find `count` looks among the data templates. Kept for template authors; the app proposes designed looks."""
     say = progress or (lambda f, m: None)
     if not proj.state.get("graded"):   # the looks sit on balanced, matched shots
         auto.build(proj, lambda f, m: say(0.3 * f, m), refit=False)

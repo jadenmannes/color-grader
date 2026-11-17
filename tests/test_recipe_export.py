@@ -16,6 +16,7 @@ from helpers import filmsim_clip, flog2_clip, load_clip
 LOOK = dict(contrast=1.12, lift=[0.004, 0.006, 0.012], gamma=[-0.010, -0.004, 0.006], gain=[1.02, 1.0, 0.985], saturation=47.0,
             lum_vs_sat=[[0.0, 0.8], [0.04, 0.9], [0.12, 1.0], [0.5, 1.0], [0.62, 0.95], [0.74, 0.9]],
             tone_curve=[[0.0, 0.0], [0.03, 0.03], [0.22, 0.2], [0.35, 0.35], [0.5, 0.52], [0.75, 0.75], [1.0, 1.0]],
+            exposure=-0.25, hsv_sat={"gain": 1.08, "gamma": 0.03},
             sat_vs_lum=[[0.0, 1.0], [0.08, 1.0], [0.16, 0.97], [0.26, 0.95], [1.0, 0.95]],
             hue_vs_sat=[[h, 0.92 if h == 120 else 1.0] for h in range(0, 360, 30)],
             hue_vs_hue=[[h, 4.0 if h == 210 else 0.0] for h in range(0, 360, 30)])
@@ -50,6 +51,10 @@ def _curves(node):
 def _run_node(x, node):
     """Apply one recipe node with Resolve's math. x is linear light for linear nodes, DaVinci Intermediate otherwise."""
     s = {i["control"]: i["value"] for i in node["settings"]}
+    if s.get("Node Color Space") == "HSV":
+        return ops.hsv_saturation(x, _rgb(s["Gain"])[0] if "Gain" in s else 1.0, _rgb(s["Gamma"])[0] if "Gamma" in s else 0.0)
+    if node["label"] == "EXPOSURE":
+        return W.di_encode(ops.lggo(W.di_decode(x), gain=_rgb(s["Gain"])))
     if "Contrast" in s:
         x = ops.contrast(x, float(s["Contrast"]), float(s["Pivot"]))
     if "Lift" in s or "Gamma" in s or "Gain" in s or "Offset" in s:

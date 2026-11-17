@@ -129,3 +129,18 @@ def test_ycbcr_round_trip_video_and_full_range():
                 planes = (y * 219 * s + 16 * s, cb * 224 * s + 128 * s, cr * 224 * s + 128 * s)
             back = ycbcr_to_rgb(*planes, matrix, full, depth)
             assert np.max(np.abs(back - rgb)) < 1e-5
+
+
+def test_hsv_saturation_keeps_value_and_darkens_like_film():
+    """HSV node with channels 1 and 3 off: the largest channel stays, more saturation lowers the others."""
+    from colorgrader.color import ops
+
+    x = np.array([[0.6, 0.4, 0.3], [0.5, 0.5, 0.5], [0.7, 0.3, 0.2], [0.45, 0.40, 0.38]], dtype=np.float32)
+    y = ops.hsv_saturation(x, 1.2)
+    assert np.allclose(y.max(axis=1), x.max(axis=1), atol=1e-6)            # value stays
+    assert np.allclose(y[1], x[1])                                           # gray stays gray
+    lum = lambda a: a @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    assert lum(y)[0] < lum(x)[0] and lum(y)[2] < lum(x)[2]                   # saturating darkens
+    g = ops.hsv_saturation(x, 1.0, 0.1)                                      # gamma lifts gentle colors more, in relative terms
+    rel = lambda a, b: ((a.max(1) - a.min(1)) / a.max(1)) / ((b.max(1) - b.min(1)) / b.max(1))
+    assert rel(g, x)[3] > rel(g, x)[2] > 1.0

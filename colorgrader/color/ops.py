@@ -165,6 +165,27 @@ def hsl_join(lum: np.ndarray, c1: np.ndarray, c2: np.ndarray) -> np.ndarray:
     return np.stack([r, g, b], axis=-1).astype(F32, copy=False)
 
 
+def hsv_saturation(x: np.ndarray, gain: float = 1.0, gamma: float = 0.0) -> np.ndarray:
+    """A node in HSV color space with channels 1 and 3 off: Gain and Gamma act on saturation alone.
+
+    Hue and value (the largest channel) stay. More saturation lowers the other channels, so colors
+    get denser and darker as they saturate, the way film dye behaves. Gain lifts strong colors most,
+    Gamma lifts gentle colors (skin, walls) most.
+    """
+    if gain == 1.0 and gamma == 0.0:
+        return x
+    v = x.max(axis=-1, keepdims=True)
+    mn = x.min(axis=-1, keepdims=True)
+    ok = v > F32(1e-6)
+    s = np.where(ok, (v - mn) / np.where(ok, v, F32(1.0)), F32(0.0))
+    s2 = np.maximum(s * F32(gain), F32(0.0))
+    e = float(gamma_ui_to_exponent(gamma))
+    if e != 1.0:
+        s2 = np.power(s2, F32(e))
+    k = np.where(s > F32(1e-6), s2 / np.where(s > F32(1e-6), s, F32(1.0)), F32(1.0))
+    return np.where(ok, v - (v - x) * k, x).astype(F32, copy=False)
+
+
 def tone_curve(x: np.ndarray, points) -> np.ndarray:
     """Custom curve, all channels ganged: one smooth monotone curve through (input, output) points.
 

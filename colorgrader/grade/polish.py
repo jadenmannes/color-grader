@@ -45,8 +45,9 @@ def _stats(parts: list[np.ndarray], look: dict[str, Any], odt) -> dict[str, floa
         highs.append(float(np.percentile(y, 99.0)))
         all_y.append(y)
     q = np.percentile(np.concatenate(all_y), [25, 50, 75])
-    # the darkest shot sets the black point and the brightest sets the top: no shot crushes or clips
-    return {"black": min(lows), "white": max(highs), "q25": float(q[0]), "median": float(q[1]), "q75": float(q[2])}
+    # The black point follows the typical shot: each shot gets its own trim under the look afterwards
+    # (Builder.shot_contrast), so one dark or hazy shot never lifts or crushes the rest. The brightest shot sets the top.
+    return {"black": float(np.median(lows)), "white": max(highs), "q25": float(q[0]), "median": float(q[1]), "q75": float(q[2])}
 
 
 def _skin_top(skin_parts: list[np.ndarray], look: dict[str, Any], odt) -> float:
