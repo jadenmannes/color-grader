@@ -253,7 +253,7 @@ def suggest_from_templates(proj, progress: Callable[[float, str], None] | None =
             continue
         say(0.35 + 0.6 * len(chosen) / count, f"Fitting {tpl['name']}")
         look, _ = fit_template(tpl, parts, skin)
-        look = auto.finish_tone(b, look, float(proj.state.get("polish", 70)) / 100.0 * float(tpl.get("finish", 1.0)))
+        look = auto.finish_tone(b, look, float(proj.state.get("polish", 85)) / 100.0 * float(tpl.get("finish", 1.0)))
         look = b.apply_skin(look)
         look, reports = auto.enforce_rules(b, look, finish, 1.0 if tpl.get("mono") else strength)
         failed = {(sid, r["id"]) for sid, rules in reports.items() for r in rules if r["status"] == "fail"} - base_fail
@@ -288,7 +288,10 @@ def apply(proj, suggestion_id: str) -> dict[str, Any]:
     for s in proj.state.get("suggestions") or []:
         if s["id"] == suggestion_id:
             proj.set_look(copy.deepcopy(s["look"]))
-            if s.get("strength", 0) > proj.state.get("strength", 80):   # a monochrome look at part strength keeps color
-                proj.set_strength(s["strength"])
+            proj.set_strength(s.get("strength", proj.state.get("strength", 80)))   # designed for this footage: full strength
+            if s.get("relight"):
+                fin = copy.deepcopy(proj.state.get("finish") or model.neutral_finish())
+                fin["relight"] = dict(s["relight"])
+                proj.set_finish(fin)
             return s
     raise KeyError("No such suggestion. Ask for suggestions again.")

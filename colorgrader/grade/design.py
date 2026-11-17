@@ -10,7 +10,8 @@ number of each look from those measurements. Each look follows the colorist work
   4 Saturation      an HSV node with channels 1 and 3 off: colors get denser as they saturate
   5 Hue rotation    color families present in the shot move toward the look's palette
   6 Split tone      Lift and Gain per channel: complementary color in shadows and highlights
-  7 Output          DaVinci Wide Gamut / Intermediate to Rec.709 with DaVinci tone mapping
+  7 Relight         background darker around tracked faces and shoulders, the speaker keeps the light
+  8 Output          DaVinci Wide Gamut / Intermediate to Rec.709 with DaVinci tone mapping
 
 The per-shot steps (1 and 2) come from the balance. The look carries steps 2 to 6.
 """
@@ -167,9 +168,9 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "mood": "True colors, healthy skin, gentle contrast. What the day looked like, finished.",
         "score": 0.6 + 0.2 * t["skin"],
         "fits": "A safe base for any interview: skin and whites carry the shot.",
-        "exposure": 0.0, "contrast": ratio(0.46, 0.92, 1.25), "floor": None,
+        "exposure": 0.0, "contrast": ratio(0.50, 0.95, 1.35), "floor": None, "relight": 0.4,
         "tints": {"shadows": [0, 0.0], "midtones": [0, 0.0], "highlights": [40, 0.003]},
-        "hsv": {"gain": hsv_gain(0.10, 0.95, 1.18), "gamma": 0.0},
+        "hsv": {"gain": hsv_gain(0.115, 0.98, 1.3), "gamma": 0.0},
         "hue_vs_hue": _moves(sc, {120: -6.0, 90: -4.0}), "hue_vs_sat": {},
         "rolloff": {"shadows": 0.9, "highlights": 0.88}, "finish": 1.0,
     })
@@ -198,9 +199,9 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "fits": ("Your light came in cool" if t["cool_light"] > 0.4 else "Gray sky flattens skin" if t["overcast"] > 0.5
                  else "The scene holds autumn color" if t["autumn"] > 0.4 else "The scene has warm light" if t["warm_light"] > 0.5
                  else "Daylight with faces") + ": warmth in the highlights flatters skin.",
-        "exposure": 0.12 * room_up * t["overcast"], "contrast": ratio(0.47, 0.92, 1.28), "floor": None,
+        "exposure": 0.12 * room_up * t["overcast"], "contrast": ratio(0.51, 0.95, 1.38), "floor": None, "relight": 0.5,
         "tints": {"shadows": [25, 0.002], "midtones": [35, 0.004 + 0.003 * t["cool_light"]], "highlights": [42, warmth]},
-        "hsv": {"gain": hsv_gain(0.105, 0.95, 1.22), "gamma": 0.02},
+        "hsv": {"gain": hsv_gain(0.12, 1.0, 1.35), "gamma": 0.02},
         "hue_vs_hue": moves, "hue_vs_sat": hvs,
         "rolloff": {"shadows": 0.9, "highlights": 0.9}, "finish": 0.85,
     })
@@ -211,9 +212,9 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "mood": "Colors compressed to two: teal shadows and backgrounds, warm skin. Deeper contrast, the modern film look.",
         "score": 0.45 + 0.15 * t["skin"] + 0.15 * t["blue"] + 0.1 * t["hard_light"] + 0.05 * t["greenery"],
         "fits": "Faces against " + ("sky and blue tones" if t["blue"] > 0.4 else "the background") + ": teal behind, warm skin in front separates the speaker.",
-        "exposure": -0.2 * (1.0 - t["low_key"]), "contrast": ratio(0.50, 0.95, 1.35), "floor": None,
+        "exposure": -0.2 * (1.0 - t["low_key"]), "contrast": ratio(0.54, 1.0, 1.45), "floor": None, "relight": 0.7,
         "tints": {"shadows": [195, 0.016 + 0.004 * t["blue"]], "midtones": [30, 0.003], "highlights": [40, 0.012]},
-        "hsv": {"gain": hsv_gain(0.10, 0.95, 1.2), "gamma": 0.0},
+        "hsv": {"gain": hsv_gain(0.115, 1.0, 1.3), "gamma": 0.0},
         "hue_vs_hue": _moves(sc, {240: -16.0, 210: -8.0, 120: -14.0, 90: -10.0, 60: -8.0, 300: 14.0, 330: 8.0}),
         "hue_vs_sat": {180: 1.06, 210: 1.06},
         "rolloff": {"shadows": 0.85, "highlights": 0.86}, "finish": 1.0,
@@ -226,11 +227,26 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "score": 0.3 + 0.3 * t["overcast"] + 0.2 * t["bright_top"] + 0.1 * t["greenery"] - 0.3 * t["low_key"],
         "fits": ("Flat light" if t["overcast"] > 0.5 else "A bright background" if t["bright_top"] > 0.5 else "This scene")
                 + ": lower exposure and denser color give it weight and calm the background.",
-        "exposure": -0.35 * (1.0 - t["low_key"]), "contrast": ratio(0.50, 0.95, 1.35), "floor": None,
+        "exposure": -0.35 * (1.0 - t["low_key"]), "contrast": ratio(0.54, 1.0, 1.45), "floor": None, "relight": 1.0,
         "tints": {"shadows": [200, 0.008], "midtones": [0, 0.0], "highlights": [45, 0.005]},
-        "hsv": {"gain": hsv_gain(0.11, 1.0, 1.25), "gamma": -0.01},
+        "hsv": {"gain": hsv_gain(0.125, 1.05, 1.4), "gamma": -0.01},
         "hue_vs_hue": _moves(sc, {120: -8.0, 90: -6.0}), "hue_vs_sat": {120: 0.86, 90: 0.9, 240: 0.92},
         "rolloff": {"shadows": 0.8, "highlights": 0.85}, "finish": 1.0,
+    })
+
+    # Punchy interview: the studio interview grade. Levels filled, strong contrast and saturation,
+    # cool shadows, mids nudged to magenta against green, warm skin, background relit down.
+    out.append({
+        "id": "punchy", "family": "punchy", "name": "Punchy interview",
+        "mood": "Deep blacks, strong contrast, rich warm skin, cool shadows. The background steps back and the speaker pops.",
+        "score": (0.45 + 0.25 * t["skin"] + 0.2 * t["muted"] + 0.15 * t["soft_light"] + 0.1 * t["green_cast"]) if t["skin"] > 0 else 0.2,
+        "fits": ("Faces in flat light" if t["soft_light"] > 0.5 else "Faces in quiet color" if t["muted"] > 0.5 else "An interview")
+                + ": contrast, color and a relight make the speaker pop.",
+        "exposure": -0.1 * (1.0 - t["low_key"]), "contrast": ratio(0.57, 1.0, 1.5), "floor": None, "relight": 0.9,
+        "tints": {"shadows": [215, 0.010], "midtones": [300, 0.003], "highlights": [30, 0.010]},
+        "hsv": {"gain": hsv_gain(0.13, 1.05, 1.45), "gamma": 0.02},
+        "hue_vs_hue": _moves(sc, {120: -8.0, 90: -6.0}), "hue_vs_sat": {120: 0.9, 150: 0.92},
+        "rolloff": {"shadows": 0.85, "highlights": 0.9}, "finish": 1.0,
     })
 
     # Bright and airy: soft light lifted, pastel color. Needs headroom above the brightest tones.
@@ -239,13 +255,21 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "mood": "Light, open and soft: lifted shadows, pastel color, clean whites. Friendly and approachable.",
         "score": (0.3 + 0.35 * t["soft_light"] * (1.0 - t["low_key"]) + 0.2 * t["high_key"]) * (0.4 + 0.6 * room_up) - 0.3 * t["hard_light"],
         "fits": "Soft light with room above the brightest tones: the shot takes a lift without clipping.",
-        "exposure": 0.25 * room_up * (1.0 - t["high_key"]), "contrast": ratio(0.40, 0.85, 1.1), "floor": 0.045,
+        "exposure": 0.25 * room_up * (1.0 - t["high_key"]), "contrast": ratio(0.42, 0.88, 1.15), "floor": 0.045, "relight": 0.25,
         "tints": {"shadows": [210, 0.004], "midtones": [0, 0.0], "highlights": [45, 0.005]},
-        "hsv": {"gain": hsv_gain(0.08, 0.85, 1.05), "gamma": 0.02},
+        "hsv": {"gain": hsv_gain(0.09, 0.9, 1.12), "gamma": 0.02},
         "hue_vs_hue": _moves(sc, {120: -6.0}), "hue_vs_sat": {120: 0.92, 240: 0.95},
         "rolloff": {"shadows": 0.95, "highlights": 0.85}, "finish": 0.35,
     })
     return out
+
+
+def relight_for(sc: dict[str, Any], d: dict[str, Any]) -> float:
+    """Background darkening in stops for one look: only with faces, more when the background is bright."""
+    t = sc["traits"]
+    if t["skin"] <= 0.0:
+        return 0.0
+    return round(float(min(1.2, d.get("relight", 0.0) * (0.8 + 0.4 * t["bright_top"] + 0.2 * t["high_key"]))), 2)
 
 
 def pick(cands: list[dict[str, Any]], count: int = 3) -> list[dict[str, Any]]:
@@ -303,7 +327,8 @@ def _tone_word(rgb_off: list[float], scale: float) -> str | None:
     return names.hue_name(float(np.degrees(np.arctan2(c2[0], c1[0])) % 360.0))
 
 
-def steps(b: auto.Builder, sc: dict[str, Any], look: dict[str, Any], strength: float, output_name: str) -> list[dict[str, str]]:
+def steps(b: auto.Builder, sc: dict[str, Any], look: dict[str, Any], strength: float, output_name: str,
+          relight_stops: float = 0.0) -> list[dict[str, str]]:
     """The workflow, step by step, with the values this look uses and why."""
     applied = model.at_strength(look, strength)
     members = sc["members"]
@@ -357,7 +382,13 @@ def steps(b: auto.Builder, sc: dict[str, Any], look: dict[str, Any], strength: f
                 "why": (f"{sh.capitalize()} shadows" if sh else "Neutral shadows") + " against "
                        + (f"{hl} highlights." if hl else "neutral highlights.")
                        + (" Complementary colors shape the face." if sh and hl and sh != hl else "")})
-    out.append({"step": "7 Output", "value": f"DaVinci Wide Gamut / Intermediate to {output_name}",
+    if relight_stops > 0:
+        out.append({"step": "7 Relight", "value": f"Background {relight_stops:.2f} stops down, soft tracked shapes over faces and shoulders",
+                    "why": "The eye goes to the speaker without a visible vignette. The subject keeps its exposure."})
+    else:
+        out.append({"step": "7 Relight", "value": "none",
+                    "why": "No faces in this scene." if sc["traits"]["skin"] <= 0 else "This look keeps the background as it is."})
+    out.append({"step": "8 Output", "value": f"DaVinci Wide Gamut / Intermediate to {output_name}",
                 "why": "DaVinci tone mapping rolls highlights off. Every step above works in the wide space before it."})
     return out
 
@@ -376,8 +407,8 @@ def propose(proj, progress: Callable[[float, str], None] | None = None, count: i
     sc = read_scene(b, shot_id)
     cands = directions(sc)
     finish = copy.deepcopy(proj.state.get("finish") or model.neutral_finish())
-    strength = float(proj.state.get("strength", 80)) / 100.0
-    polish_amount = float(proj.state.get("polish", 70)) / 100.0
+    strength = 1.0   # each look is designed for this footage: it runs in full, the slider can take it back
+    polish_amount = float(proj.state.get("polish", 85)) / 100.0
     output_name = Wk.OUTPUT_SPACES.get(settings.load()["output_space"], {}).get("name", "Rec.709")
     snap = b.snapshot()
     base_reports = b.check(model.neutral_look(), strength, finish)
@@ -397,7 +428,8 @@ def propose(proj, progress: Callable[[float, str], None] | None = None, count: i
         look, reports = auto.enforce_rules(b, look, finish, strength)
         failed = {(sid, r["id"]) for sid, rules in reports.items() for r in rules if r["status"] == "fail"} - base_fail
         fixes = list(b.fixes)
-        step_list = steps(b, sc, look, strength, output_name)
+        rl = relight_for(sc, d)
+        step_list = steps(b, sc, look, strength, output_name, rl)
         b.restore(snap)
         if failed:
             continue
@@ -405,13 +437,17 @@ def propose(proj, progress: Callable[[float, str], None] | None = None, count: i
         look["reasons"]["exposure"] = next(s["why"] for s in step_list if s["step"].startswith("2"))
         look["reasons"]["hsv_gain"] = next(s["why"] for s in step_list if s["step"].startswith("4"))
         try:
-            img = proj.render_frame(lead["clip_id"], t_mid, "graded", 480, lead["id"], look=model.at_strength(look, strength))
+            fin = copy.deepcopy(proj.state.get("finish") or model.neutral_finish())
+            fin["relight"] = {"enabled": rl > 0, "amount": rl or 0.6, "subject": 0.0}
+            img = proj.render_frame(lead["clip_id"], t_mid, "graded", 480, lead["id"], look=model.at_strength(look, strength),
+                                    finish_override=fin)
             suggest.thumb_path(d["id"]).write_bytes(pipeline.to_jpeg(img, 86))
         except Exception:
             suggest.thumb_path(d["id"]).unlink(missing_ok=True)
         chosen.append({"id": d["id"], "name": d["name"], "mood": d["mood"], "family": d["family"], "why": d["fits"],
                        "score": round(float(d["score"]), 3), "look": look, "fixes": fixes, "stamp": stamp,
-                       "strength": int(round(strength * 100)), "steps": step_list, "shot_id": lead["id"]})
+                       "strength": int(round(strength * 100)), "steps": step_list, "shot_id": lead["id"],
+                       "relight": {"enabled": rl > 0, "amount": rl or 0.6, "subject": 0.0}})
     with proj.lock:
         proj.state["suggestions"] = chosen
         proj.state["scene_read"] = {"shot_id": lead["id"], "shot_index": lead["index"], "clip_id": lead["clip_id"],

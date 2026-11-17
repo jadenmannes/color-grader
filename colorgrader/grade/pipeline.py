@@ -19,6 +19,7 @@ import numpy as np
 
 from ..color import ops
 from ..color import working as W
+from . import relight
 from ..color.transforms import InputTransform, OutputTransform, correction_gains
 from . import model
 
@@ -198,7 +199,7 @@ def detail_display(disp: np.ndarray, sharpen: float, clarity: float) -> np.ndarr
 
 def render(signal_rgb: np.ndarray, idt: InputTransform, odt: OutputTransform, corrections: dict[str, Any] | None,
            shot: dict[str, Any] | None = None, look: dict[str, Any] | None = None, finish: dict[str, Any] | None = None,
-           stage: str = "graded") -> np.ndarray:
+           stage: str = "graded", relight_mask: np.ndarray | None = None) -> np.ndarray:
     """Render display R'G'B' at a named stage: converted, balanced, graded."""
     dn, sharp, clar = detail_values(finish if (stage == "graded" and shot is not None and look is not None) else None)
     if dn > 0:
@@ -213,6 +214,14 @@ def render(signal_rgb: np.ndarray, idt: InputTransform, odt: OutputTransform, co
         return odt(di)
     di = look_stage(di, look)
     if finish:
+        on, amount, subject = relight.settings(finish)
+        if on and relight_mask is not None and di.ndim == 3:
+            m = relight_mask
+            if m.shape != di.shape[:2]:
+                import cv2
+
+                m = cv2.resize(m, (di.shape[1], di.shape[0]), interpolation=cv2.INTER_LINEAR)
+            di = relight.apply(di, m, amount, subject)
         di = finish_stage(di, finish)
     return detail_display(odt(di), sharp, clar)
 

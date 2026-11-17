@@ -34,7 +34,7 @@ def test_three_looks_with_name_mood_steps_and_preview(proj, workdir):
         assert s["name"] and s["mood"].count(".") >= 1 and s["why"]
         assert suggest.thumb_path(s["id"]).stat().st_size > 2000  # the preview picture
         assert s["look"]["source"] == "suggestion" and s["look"]["reasons"]["contrast"].startswith(s["name"])
-        assert [st["step"][0] for st in s["steps"]] == list("1234567")   # the colorist workflow, step by step
+        assert [st["step"][0] for st in s["steps"]] == list("12345678")  # the colorist workflow, step by step
         assert all(st["value"] and st["why"] for st in s["steps"])
     assert proj.state["suggestions"] == found and proj.state["scene_read"]["lines"]
     # every suggestion holds the quality rules; exposure moves only as far as the look says

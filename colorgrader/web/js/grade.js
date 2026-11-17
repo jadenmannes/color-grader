@@ -100,8 +100,8 @@ function GradeTab({ ctx, shot, onLive }) {
   const build = () => runJob(() => api.post('/api/grade/build', {}), 'Building the grade');
   const [bright, setBright] = useState(proj.brightness === undefined ? 100 : proj.brightness);
   useEffect(() => { setBright(proj.brightness === undefined ? 100 : proj.brightness); }, [proj.brightness]);
-  const [polish, setPolish] = useState(proj.polish === undefined ? 70 : proj.polish);
-  useEffect(() => { setPolish(proj.polish === undefined ? 70 : proj.polish); }, [proj.polish]);
+  const [polish, setPolish] = useState(proj.polish === undefined ? 85 : proj.polish);
+  useEffect(() => { setPolish(proj.polish === undefined ? 85 : proj.polish); }, [proj.polish]);
   const changePolish = async (v) => {
     try {
       await api.put('/api/grade/polish', { polish: v });
@@ -175,6 +175,10 @@ function GradeTab({ ctx, shot, onLive }) {
               onChange=${(e) => setFinish({ detail: { [key]: parseInt(e.target.value, 10) } })} />
             <span class="mono" style="width:44px">${(fin.detail || {})[key] || 0}</span></div>`)}
         <div class="dim" style="margin:2px 0 6px 22px">Judge noise and sharpness at full size: Play graded or the export. The viewer scales the picture down.</div>
+        <div class="row" title="Darkens the background around tracked faces and shoulders. The speaker stays lit."><input type="checkbox" checked=${(fin.relight || {}).enabled} onChange=${(e) => setFinish({ relight: { enabled: e.target.checked } })} />
+          <span style="width:70px">Relight</span>
+          <input type="range" min="0.1" max="1.5" step="0.05" value=${(fin.relight || {}).amount || 0.6} onChange=${(e) => setFinish({ relight: { amount: parseFloat(e.target.value) } })} />
+          <span class="mono" style="width:74px">${((fin.relight || {}).amount || 0.6).toFixed(2)} stops</span></div>
         <div class="row"><input type="checkbox" checked=${fin.grain.enabled} onChange=${(e) => setFinish({ grain: { enabled: e.target.checked } })} />
           <span style="width:70px">Grain</span>
           <input type="range" min="0.1" max="1.2" step="0.05" value=${fin.grain.amount} onChange=${(e) => setFinish({ grain: { amount: parseFloat(e.target.value) } })} />

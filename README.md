@@ -83,10 +83,20 @@ The directions, chosen and tuned by that read:
 | Cinematic teal and orange | Faces against sky, blue tones or a busy background | Hue compression only for colors the shot holds, teal shadows, warm highlights, a slightly darker exposure |
 | Rich and moody | Flat light, bright backgrounds | Lower exposure, denser HSV saturation, quieter greens, deep blacks |
 | Bright and airy | Soft light with room above the brightest tones | A lift sized to that room, lifted shadows, pastel color |
+| Punchy interview | Faces, above all in flat light or quiet color | The studio interview grade: levels filled, strong contrast and saturation, cool shadows, mids nudged against green, warm skin, a strong relight |
 
-Each look lists the colorist workflow with its values and reasons: 1 white balance, 2 exposure, 3 contrast, 4 saturation, 5 hue rotation, 6 split tone, 7 output. Steps 1 and 2 stay per shot; the look carries the rest, so every shot of the interview matches.
+Each look lists the colorist workflow with its values and reasons: 1 white balance, 2 exposure, 3 contrast, 4 saturation, 5 hue rotation, 6 split tone, 7 relight, 8 output. A designed look runs at full strength; the Look strength slider takes it back. Steps 1 and 2 stay per shot; the look carries the rest, so every shot of the interview matches.
 
 Every shot also gets its own black point and contrast (the clip-level EXP/CON step): haze comes off in linear light, crushed blacks open, and a flat shot gets contrast around its own middle so its exposure stays. Once a look is on, each shot is trimmed again under it, so one dark or hazy shot never shifts the rest.
+
+### Subject relight
+
+The interview technique of darkening the frame and keeping the speaker lit. The analysis finds faces on every analyzed frame (two per second) and smooths their path. A soft ellipse sits over each head, from above the hairline to below the chin, and a wide one over the shoulders and chest. Outside them the picture drops by the set number of stops in the working space; inside, the subject keeps its exposure exactly (the hand-made `2 - g` shortcut leaves the subject 13% darker). The feather is about a third of each radius, so no edge shows.
+
+- The first build switches it on at 0.5 stops when most shots hold a face. Each designed look sets its own amount: more for bright backgrounds, none without faces.
+- Preview, Play graded and the export all follow the faces. The export feeds ffmpeg one small mask frame per video frame.
+- The recipe lists a RELIGHT node: two windows, the tracker, and an Outside node with the Offset. Window shapes and tracking are set by eye in Resolve. LUTs cannot carry it.
+- Grade tab, Finish: Relight on or off and its strength in stops.
 
 ### Tools from the colorist workflow
 

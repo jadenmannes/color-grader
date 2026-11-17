@@ -313,6 +313,23 @@ def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
                      "The darkening starts well outside the subject and reaches full strength in the corners. Set by eye against the app preview."),
              setting("Softness", "High. The edge must stay invisible.", "A vignette nobody notices keeps the eye in the frame."),
              setting("Offset", rgb([off, off, off], 2), f"{float(vig['amount']):.2f} stops darker in the corners. One stop is 10 Offset points in DaVinci Intermediate.")])
+    rl = fin.get("relight") or {}
+    if rl.get("enabled") and (rl.get("amount", 0) or rl.get("subject", 0)):
+        out_off = 25.0 - ctx["stop_points"] * float(rl.get("amount", 0.0))
+        in_off = 25.0 + ctx["stop_points"] * float(rl.get("subject", 0.0))
+        items = [setting("Window 1", "Circle over the face: from above the hairline to below the chin, a little wider than the face. Softness high.",
+                         "Keeps the face lit. Set by eye: the app places it on each detected face."),
+                 setting("Window 2", "Circle or curve over the shoulders and chest, running out of the frame bottom. Softness high.",
+                         "Keeps the body lit with the face, so the subject reads as one shape."),
+                 setting("Tracker", "Pan, Tilt, Zoom and Rotate on. Track forward through the shot.",
+                         "The shapes follow the speaker. The app follows the faces it found twice a second."),
+                 setting("Outside node", f"Right-click the node, Add Outside Node. Offset {rgb([out_off] * 3, 2)}",
+                         f"Background {float(rl.get('amount', 0.0)):.2f} stops darker: the eye goes to the speaker, with no visible vignette.")]
+        if abs(in_off - 25.0) > 0.005:
+            items.append(setting("Offset inside", rgb([in_off] * 3, 2), f"Subject {float(rl.get('subject', 0.0)):+.2f} stops."))
+        add("RELIGHT", "Subject relight", "Window, Tracker and an Outside node",
+            "Last clip-level node in Resolve, so each shot gets its own tracked windows.", items,
+            notes=["Windows and tracking are set by eye in Resolve. The app's export carries the exact relight."])
     if grain.get("enabled") and grain.get("amount", 0) > 0:
         if ctx["edition"] == "studio":
             add("GRAIN", "Fine grain", "Film Grain (ResolveFX Texture)", "Effects panel, ResolveFX Texture, Film Grain. Drag it onto the node.",
@@ -421,7 +438,7 @@ def build(ctx: dict[str, Any]) -> dict[str, Any]:
         "id": "luts", "title": "4. LUT route",
         "where": "Export tab, Export LUT set. Copy the files into Resolve's LUT folder (Project Settings, Color Management, Open LUT Folder), then press Update Lists.",
         "notes": ["Each LUT replaces a group of nodes. The balance nodes stay: a LUT holds no per-shot values.",
-                  f"LUT size: {ctx['settings']['lut_size']} points per side. Vignette, grain, noise reduction and sharpening stay outside the LUTs."],
+                  f"LUT size: {ctx['settings']['lut_size']} points per side. Relight, vignette, grain, noise reduction and sharpening stay outside the LUTs."],
         "items": lut_items})
     sections.append({
         "id": "check", "title": "5. Check",

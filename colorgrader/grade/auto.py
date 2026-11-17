@@ -753,7 +753,7 @@ def build(proj, progress: Callable[[float, str], None] | None = None, refit: boo
         b.say(0.5, "Matching the look to the reference")
         look = b.fit_reference(ref, proj.reference_arrays())
         if not b.fit_info.get("same_content"):
-            look = finish_tone(b, look, float(st.get("polish", 70)) / 100.0)
+            look = finish_tone(b, look, float(st.get("polish", 85)) / 100.0)
     b.say(0.7, "Protecting skin")
     if not model.is_neutral_look(dict(look, skin={"hue_vs_hue": [], "hue_vs_sat": []})) or look.get("source") in ("reference", "suggestion", "saved"):
         look = b.apply_skin(look)
@@ -763,6 +763,10 @@ def build(proj, progress: Callable[[float, str], None] | None = None, refit: boo
         # first build: a finished picture is clean and crisp. Noise reduction follows the noisiest source.
         log = [it for it in b.items if getattr(it["idt"].curve, "kind", "") == "scene"]
         finish["detail"] = model.default_detail(min((it["clip"]["info"]["bit_depth"] for it in log), default=10), bool(log))
+        # interviews: when most shots hold a face, the background falls back half a stop behind the speaker
+        faces = sum(1 for it in b.items if it["shot"].get("has_faces"))
+        if faces * 2 >= len(b.items):
+            finish.setdefault("relight", model.neutral_finish()["relight"]).update({"enabled": True, "amount": 0.5})
         st["detail_set"] = True
     strength = float(st.get("strength", 80)) / 100.0
     if not (getattr(b, "fit_info", None) or {}).get("same_content"):   # a graded copy of a shot defines that shot in full

@@ -24,6 +24,7 @@ from .color import working as W
 from .color.transforms import InputTransform, OutputTransform, input_transform_for
 from .color.ycbcr import signal_to_absolute
 from .grade import model, pipeline
+from .grade import relight as relight_mod
 
 F32 = np.float32
 SAMPLE_PER_FRAME = 3000
@@ -74,7 +75,7 @@ class Project:
         return {"version": 1, "clips": [], "shots": [], "scenes": [], "reference": None,
                 "look": model.neutral_look(), "strength": int(st["look_strength"]),
                 "finish": model.neutral_finish(), "suggestions": [], "graded": False, "report": None,
-                "brightness": 100, "polish": 70}
+                "brightness": 100, "polish": 85}
 
     def _file(self) -> Path:
         return paths.sub("projects") / f"{self.name}.json"
@@ -314,7 +315,7 @@ class Project:
         rng = np.random.default_rng(1234 + index)
         keep_idx = set(np.unique(np.linspace(0, len(frames) - 1, min(KEEP_FRAMES, len(frames))).round().astype(int)).tolist())
         per_frame = max(500, min(SAMPLE_PER_FRAME, SAMPLE_MAX // max(1, len(frames))))
-        samp, samp_y, skins, kept, kept_t, face_list = [], [], [], [], [], []
+        samp, samp_y, skins, kept, kept_t, face_list, track = [], [], [], [], [], [], []
         code_hist = np.zeros(1024, dtype=np.float64)
         for n, (t, buf, w, h) in enumerate(frames):
             sig, lin = self._frame_lin(clip, buf, w, h, idt, prof)
@@ -324,11 +325,12 @@ class Project:
             pick = rng.choice(flat.shape[0], min(per_frame, flat.shape[0]), replace=False)
             samp.append(flat[pick])
             samp_y.append((pick // w).astype(F32) / max(1, h - 1))
+            disp = odt(W.di_encode(lin))
+            fl = faces_mod.detect_faces(disp)          # every analyzed frame: the relight follows the faces
+            track.append([round(float(t), 3), relight_mod.normalize_faces(fl, w, h)])
             if n in keep_idx:
                 kept.append(lin.astype(np.float16))
                 kept_t.append(t)
-                disp = odt(W.di_encode(lin))
-                fl = faces_mod.detect_faces(disp)
                 face_list.append(fl)
                 if fl:
                     skins.append(faces_mod.skin_pixels(lin, fl))
@@ -343,10 +345,50 @@ class Project:
         return {"id": sid, "clip_id": clip["id"], "index": index, "start": round(start, 4), "end": round(end, 4),
                 "frames_analyzed": len(frames), "times": [round(float(t), 3) for t in kept_t],
                 "faces": [[[round(float(v), 2) for v in f] for f in fl] for fl in face_list],
-                "has_faces": any(len(fl) > 0 for fl in face_list),
+                "has_faces": any(len(fl) > 0 for fl in face_list) or any(f for _, f in track),
+                "track": relight_mod.smooth_track(track),
                 "scene": 1, "signature": self.profile_signature(clip), "measure": m, "summary": measure_mod.summarize(m),
                 "source_clip": src_clip,
                 "grade": model.neutral_shot(), "data": str(npz)}
+
+    def face_track(self, shot_id: str) -> list[list[Any]]:
+        """Faces through a shot, two samples per second. Built on first use for shots analyzed before tracking."""
+        shot = self.shot(shot_id)
+        if shot.get("track") is not None:
+            return shot["track"]
+        clip = self.clip(shot["clip_id"])
+        meta = clip.get("analysis") or {}
+        track: list[list[Any]] = []
+        if meta.get("analysis_path") and Path(meta["analysis_path"]).exists():
+            idt, prof = self.idt(clip)
+            odt = self.odt()
+            mm = media.open_analysis(meta)
+            aw, ah = meta["analysis_size"]
+            fps_a = meta["analysis_fps"]
+            for i in range(meta["analysis_frames"]):
+                t = i / fps_a
+                if not (shot["start"] <= t < shot["end"]):
+                    continue
+                _, lin = self._frame_lin(clip, np.asarray(mm[i]), aw, ah, idt, prof)
+                fl = faces_mod.detect_faces(odt(W.di_encode(lin)))
+                track.append([round(t, 3), relight_mod.normalize_faces(fl, aw, ah)])
+        else:   # no decode cache: the few frames measured with the shot
+            aw, ah = (meta.get("analysis_size") or [clip["info"]["display_width"], clip["info"]["display_height"]])
+            for t, fl in zip(shot.get("times") or [], shot.get("faces") or []):
+                track.append([t, relight_mod.normalize_faces(fl, aw, ah)])
+        track = relight_mod.smooth_track(track)
+        with self.lock:
+            shot["track"] = track
+            self.save()
+        return track
+
+    def relight_mask(self, shot_id: str | None, t: float, width: int, height: int) -> np.ndarray | None:
+        if not shot_id or not relight_mod.settings(self.state.get("finish"))[0]:
+            return None
+        try:
+            return relight_mod.mask(relight_mod.faces_at(self.face_track(shot_id), t), width, height)
+        except ProjectError:
+            return None
 
     def shot_data(self, shot_id: str) -> dict[str, np.ndarray]:
         """Pooled linear sample, skin sample and a few frames of a shot (linear DaVinci Wide Gamut)."""
@@ -381,12 +423,13 @@ class Project:
         return val
 
     def render_frame(self, clip_id: str, t: float, stage: str = "graded", width: int | None = None,
-                     shot_id: str | None = None, look: dict[str, Any] | None = None) -> np.ndarray:
+                     shot_id: str | None = None, look: dict[str, Any] | None = None,
+                     finish_override: dict[str, Any] | None = None) -> np.ndarray:
         """Display R'G'B' of one frame at a stage: source, converted, balanced, graded."""
         clip = self.clip(clip_id)
         info = clip["info"]
         width = int(width or settings.load()["preview_width"])
-        finish = copy.deepcopy(self.state["finish"]) if stage == "graded" else None
+        finish = copy.deepcopy(finish_override or self.state["finish"]) if stage == "graded" else None
         prefilter = ""
         if finish and not info["is_image"]:
             # the viewer cleans the frame with the same filter as the export, so both show the same picture
@@ -407,7 +450,13 @@ class Project:
             shot = model.quantize_shot(self.shot(shot_id)["grade"])
         if look is None and stage == "graded":
             look = model.at_strength(self.state["look"], self.state["strength"] / 100.0)
-        return pipeline.render(sig, idt, self.odt(), prof.get("corrections"), shot, look, finish, stage)
+        rmask = None
+        if finish and relight_mod.settings(finish)[0] and shot_id and not info["is_image"]:
+            try:
+                rmask = relight_mod.mask(relight_mod.faces_at(self.face_track(shot_id), t), w, h)
+            except ProjectError:
+                rmask = None
+        return pipeline.render(sig, idt, self.odt(), prof.get("corrections"), shot, look, finish, stage, relight_mask=rmask)
 
     # ---------------------------------------------------------- reference
     def _ref_file(self) -> Path:
@@ -478,7 +527,7 @@ class Project:
 
     def set_finish(self, finish: dict[str, Any]) -> None:
         base = model.neutral_finish()
-        for key in ("vignette", "grain"):
+        for key in ("vignette", "grain", "relight"):
             base[key].update({k: v for k, v in (finish.get(key) or {}).items() if k in base[key]})
         for k in base["detail"]:
             try:

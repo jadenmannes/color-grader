@@ -416,7 +416,7 @@ def set_brightness(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 @app.put("/api/grade/polish")
 def set_polish(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    project.get().set_polish(float(body.get("polish", 70)))
+    project.get().set_polish(float(body.get("polish", 85)))
     return {"ok": True}
 
 

@@ -61,6 +61,7 @@ def neutral_finish() -> dict[str, Any]:
         "vignette": {"enabled": False, "amount": 0.25, "start": 0.45},  # amount: stops darker in the corners
         "grain": {"enabled": False, "amount": 0.35, "size": 1.0},     # amount: percent of signal
         "detail": {"denoise": 0, "sharpen": 0, "clarity": 0},          # each 0..100, 0 = off
+        "relight": {"enabled": False, "amount": 0.6, "subject": 0.0},   # stops: background down, subject up or down
     }
 
 

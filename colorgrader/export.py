@@ -18,6 +18,7 @@ import numpy as np
 from . import media, paths, settings
 from .color import working as W
 from .color.lut import Lut3D, write_cube
+from .grade import relight as relight_mod
 from .grade import model, pipeline
 
 F32 = np.float32
@@ -351,7 +352,15 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     finish = proj.state["finish"] if stage == "graded" else model.neutral_finish()
     vig = finish["vignette"] if finish["vignette"].get("enabled") else None
     grain = finish["grain"] if finish["grain"].get("enabled") else None
-    two_stage = bool(vig or grain)
+    rl_on, rl_amount, rl_subject = relight_mod.settings(finish)
+    tracks = {}
+    if rl_on and stage == "graded" and (rl_amount or rl_subject):
+        for s in shots:
+            tr = proj.face_track(s["id"])
+            if any(f for _, f in tr):
+                tracks[s["id"]] = tr
+    relit = bool(tracks)
+    two_stage = bool(vig or grain or relit)
     lut_size = 33 if preview else 65
     use_z = has_filter("zscale")
     say(0.02, "Building the grade tables")
@@ -410,6 +419,31 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     last = "g0"
     inputs = ["-i", info["path"]]
     n_in = 1
+    rl_file = None
+    if relit:
+        # The relight follows the faces, so its mask moves: one small gray frame per video frame, scaled up
+        # in ffmpeg. Stored as 0.5 + shift / 2K with opacity 2K: grainmerge gives A + shift, in stops of DI.
+        k = W.STOP * max(abs(rl_amount), abs(rl_subject), 1e-3)
+        mw = 256
+        mh = max(2, int(round(mw * h / w / 2)) * 2)
+        n_frames = int(round(info["duration"] * fps)) + 2
+        rl_file = work / "relight_mask.raw"
+        say(0.03, "Tracking faces for the relight")
+        with open(rl_file, "wb") as fh:
+            for fi in range(n_frames):
+                t = fi / fps
+                s = next((x for x in shots if x["start"] - 0.5 / fps <= t < x["end"] - 0.5 / fps), shots[-1])
+                m = relight_mod.mask(relight_mod.faces_at(tracks[s["id"]], t), mw, mh) if s["id"] in tracks else None
+                if m is None:
+                    frame = np.full((mh, mw), 128, dtype=np.uint8)
+                else:
+                    shift = W.STOP * (rl_subject * m - rl_amount * (1.0 - m))
+                    frame = np.clip(np.round((0.5 + 0.5 * shift / k) * 255.0), 0, 255).astype(np.uint8)
+                fh.write(frame.tobytes())
+        inputs += ["-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{mw}x{mh}", "-r", f"{fps:.6f}", "-i", str(rl_file)]
+        graph += (f";[{n_in}:v]scale={w}:{h}:flags=bicubic,format=gray,mergeplanes=0x000000:gbrp,{_to_float_rgb()},"
+                  f"setpts=N/({fps:.6f}*TB)[rm];[{last}][rm]blend=all_mode=grainmerge:all_opacity={min(2.0 * k, 1.0):.6f}:shortest=1[gr0]")
+        last, n_in = "gr0", n_in + 1
     if vig:
         # ffmpeg's subtract blend clamps at zero. grainmerge computes A + (B - 0.5) * opacity with no clamp,
         # so the mask is stored as 0.5 - mask / 2 and the opacity doubles: A - mask * k.
@@ -488,7 +522,10 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
             except ValueError:
                 pass
     err = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
-    if proc.wait() != 0:
+    rc = proc.wait()
+    if rl_file is not None:   # after ffmpeg exits: Windows keeps an open file locked
+        rl_file.unlink(missing_ok=True)
+    if rc != 0:
         raise ExportError(f"ffmpeg failed: {err[-600:]}")
     say(1.0, "Done")
     return {"path": str(out_path), "format": f["id"], "format_name": f["name"], "seconds": round(time.time() - t0, 1),

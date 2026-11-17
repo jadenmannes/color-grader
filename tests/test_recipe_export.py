@@ -103,7 +103,7 @@ def test_recipe_numbers_alone_rebuild_the_picture(proj, workdir):
         if linear:
             x = W.di_encode(x)
         for node in timeline:
-            if node["label"] in ("OUT A", "OUT B", "VIGNETTE", "GRAIN"):
+            if node["label"] in ("OUT A", "OUT B", "VIGNETTE", "GRAIN", "RELIGHT", "NR", "DETAIL"):
                 continue
             x = _run_node(x, node)
         want = proj.render_frame(clip["id"], t, "graded", 320, shot["id"])
@@ -401,3 +401,24 @@ def test_first_build_sets_a_finished_picture(proj, workdir):
         assert proj.state["finish"]["detail"] == {"denoise": 0, "sharpen": 0, "clarity": 0}   # your own values stay
     finally:
         settings.save({"auto_detail": False})
+
+
+def test_relight_darkens_the_background_and_keeps_the_subject(proj, workdir, tmp_path):
+    """Tracked soft shapes over the face and body: the background drops by the set stops in preview and export."""
+    clip = build_graded(proj, workdir, "rx_relight.mov", frames_each=20, size=(640, 360))
+    shots = proj.shots_of(clip["id"])
+    for s in shots:   # a face moving left to right through each shot, as the tracker would report it
+        s["track"] = [[s["start"], [[0.40, 0.40, 0.10, 0.18, 0.9]]], [s["end"], [[0.50, 0.40, 0.10, 0.18, 0.9]]]]
+    shot = shots[0]
+    t = 0.5 * (shot["start"] + shot["end"])
+    plain = np.clip(proj.render_frame(clip["id"], t, "graded", 640, shot["id"]), 0, 1)
+    proj.set_finish({"relight": {"enabled": True, "amount": 0.8, "subject": 0.0}})
+    lit = np.clip(proj.render_frame(clip["id"], t, "graded", 640, shot["id"]), 0, 1)
+    face = (slice(130, 160), slice(270, 330))          # face center at x 0.45, y 0.40 halfway through the shot
+    corner = (slice(0, 40), slice(560, 640))
+    y = lambda im: float((im @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)).mean())
+    assert abs(y(lit[face]) - y(plain[face])) < 0.01                 # subject stays where it was
+    assert y(lit[corner]) < y(plain[corner]) - 0.04                   # background falls into shadow
+    got, _ = _decode(export.render_clip(proj, clip["id"], tmp_path / "relight.mp4")["path"], t, 640)
+    assert np.abs(got - lit).mean() < 0.01                           # the export follows the same shapes
+    assert abs(y(got[corner]) - y(lit[corner])) < 0.015
