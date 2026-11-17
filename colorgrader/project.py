@@ -42,6 +42,18 @@ def _hash(*parts: Any) -> str:
     return h.hexdigest()[:12]
 
 
+def fingerprint(path: Path) -> str:
+    """Content key of a media file: size plus the first and last megabyte. Two copies of one file share it, whatever their names."""
+    size = path.stat().st_size
+    h = hashlib.sha1(str(size).encode())
+    with path.open("rb") as fh:
+        h.update(fh.read(1 << 20))
+        if size > 2 << 20:
+            fh.seek(size - (1 << 20))
+            h.update(fh.read(1 << 20))
+    return h.hexdigest()[:16]
+
+
 def clip_id_for(path: Path) -> str:
     st = path.stat()
     return _hash(str(path.resolve()), st.st_size, int(st.st_mtime))
@@ -132,6 +144,23 @@ class Project:
         return p
 
     # -------------------------------------------------------------- clips
+    def find_copy(self, p: Path) -> dict[str, Any] | None:
+        """The clip in the project that holds the same file content, under any name or folder."""
+        try:
+            fp = fingerprint(p)
+        except OSError:
+            return None
+        with self.lock:
+            for c in self.state["clips"]:
+                if c.get("fingerprint") is None:
+                    try:
+                        c["fingerprint"] = fingerprint(Path(c["path"]))
+                    except OSError:
+                        continue
+                if c["fingerprint"] == fp:
+                    return c
+        return None
+
     def add_clip(self, path: str) -> dict[str, Any]:
         p = Path(path).expanduser()
         info = media.probe(p)
@@ -140,8 +169,11 @@ class Project:
             for c in self.state["clips"]:
                 if c["id"] == cid:
                     return c
+        same = self.find_copy(p)
+        if same is not None:   # the same footage under another name: one clip, one analysis
+            return dict(same, duplicate=True)
         det = cameras.detect(info)
-        clip = {"id": cid, "path": str(p), "name": p.name, "info": info,
+        clip = {"id": cid, "path": str(p), "name": p.name, "info": info, "fingerprint": fingerprint(p),
                 "camera_id": det["camera_id"], "profile_id": det["profile_id"], "detect": det,
                 "confirmed": not det["needs_confirm"], "analysis": None, "error": None}
         with self.lock:

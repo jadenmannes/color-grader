@@ -229,6 +229,10 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
     with target.open("wb") as fh:
         while chunk := await file.read(1 << 20):
             fh.write(chunk)
+    same = project.get().find_copy(target)
+    if same is not None:   # the footage is in the project already: keep no second copy on disk
+        target.unlink(missing_ok=True)
+        return {"path": same["path"], "duplicate": True}
     return {"path": str(target)}
 
 
@@ -236,13 +240,18 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
 @app.post("/api/clips")
 def add_clips(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     p = project.get()
-    added, errors = [], []
+    added, errors, skipped = [], [], []
     for path in body.get("paths") or []:
         try:
-            added.append(p.add_clip(path))
+            c = p.add_clip(path)
         except (media.MediaError, OSError) as exc:
             errors.append({"path": path, "error": str(exc)})
-    return {"added": added, "errors": errors}
+            continue
+        if c.pop("duplicate", False):
+            skipped.append({"path": path, "name": c["name"]})
+        else:
+            added.append(c)
+    return {"added": added, "errors": errors, "skipped": skipped}
 
 
 @app.delete("/api/clips/{clip_id}")

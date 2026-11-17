@@ -318,6 +318,11 @@ def read_frame(info: dict[str, Any], t: float, max_width: int = 1280, prefilter:
     return np.frombuffer(r.stdout[:need], dtype="<u2").copy(), w, h
 
 
+def decode_threads() -> int:
+    """Decoder threads for long decodes. Every thread holds its own full-size frames: 8 keeps 4K decoding fast and its memory in bounds."""
+    return max(2, min(8, os.cpu_count() or 4))
+
+
 def analysis_pass(info: dict[str, Any], out_dir: Path, analysis_fps: float, analysis_pixels: int = 230400,
                   cut_size: tuple[int, int] = (64, 36),
                   progress: Callable[[float], None] | None = None) -> dict[str, Any]:
@@ -337,7 +342,7 @@ def analysis_pass(info: dict[str, Any], out_dir: Path, analysis_fps: float, anal
     graph = (f"[0:v]split=2[a][b];"
              f"[a]fps={analysis_fps:.6f},{_scale_filter(aw, ah)},format={out_pix_fmt(info)}[oa];"
              f"[b]fps={cut_fps:.6f},scale={cw}:{ch}:flags=fast_bilinear,format=rgb24[ob]")
-    cmd = [find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", "-i", info["path"], "-an", "-sn",
+    cmd = [find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", "-threads", str(decode_threads()), "-i", info["path"], "-an", "-sn",
            "-filter_complex", graph,
            "-map", "[oa]", "-f", "rawvideo", str(a_path),
            "-map", "[ob]", "-f", "rawvideo", str(c_path),

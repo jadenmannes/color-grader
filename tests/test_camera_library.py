@@ -243,3 +243,49 @@ def test_camera_xml_inside_the_clip(workdir):
     clip.write_bytes(data + SIDECAR_XML.encode("utf-8"))   # trailing bytes after the last atom: decoders ignore them
     tags = media.camera_xml_tags(clip)
     assert tags["xml.device.modelname"] == "ILCE-7CM2" and tags["xml.capturecolorprimaries"] == "S-Gamut3Cine"
+
+
+def test_jobs_run_one_at_a_time():
+    """Two jobs never decode side by side: the second waits for the first. A memory failure reads as plain words."""
+    import threading
+    import time as _t
+
+    from colorgrader import jobs as jobs_mod
+
+    running, peak, lock = [0], [0], threading.Lock()
+
+    def work(progress):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        _t.sleep(0.3)
+        with lock:
+            running[0] -= 1
+        return "ok"
+
+    ids = [jobs_mod.start("test", work, "Test job") for _ in range(3)]
+    for j in ids:
+        assert jobs_mod.wait(j, 10)["state"] == "done"
+    assert peak[0] == 1
+
+    def boom(progress):
+        err = OSError("Not enough memory resources are available to process this command")
+        err.winerror = 8
+        raise err
+
+    res = jobs_mod.wait(jobs_mod.start("test", boom, "Analyzing footage"), 10)
+    assert res["state"] == "error" and "ran out of memory" in res["error"] and "analyzing footage" in res["error"]
+
+
+def test_the_same_footage_under_another_name_is_skipped(client, workdir):
+    """A copy of a clip (renamed, or copied by drag and drop) joins the project once."""
+    import shutil
+
+    src = slog3_clip(workdir / "dup_src.mov", frames_each=6)
+    copy_path = workdir / "9fd85e_dup_src.mov"
+    shutil.copyfile(src, copy_path)
+    first = client.post("/api/clips", json={"paths": [str(src)]}).json()
+    assert len(first["added"]) == 1
+    again = client.post("/api/clips", json={"paths": [str(copy_path)]}).json()
+    assert again["added"] == [] and again["skipped"][0]["name"] == "dup_src.mov"
+    assert len(client.get("/api/state").json()["project"]["clips"]) == 1

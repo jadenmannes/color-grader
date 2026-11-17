@@ -221,6 +221,7 @@ export function ProjectPage({ ctx }) {
     try {
       const res = await api.post('/api/clips', { paths });
       res.errors.forEach((e) => notify(`${e.path}: ${e.error}`));
+      (res.skipped || []).forEach((d) => notify(`${d.path.split(/[\\/]/).pop()} is already in the project as ${d.name}. Skipped.`, 'info'));
       const s = await refresh();
       const ready = res.added.filter((c) => c.camera_id && c.confirmed && !(s && s.project.shots.some((x) => x.clip_id === c.id))).map((c) => c.id);
       const unknown = res.added.find((c) => !c.camera_id);

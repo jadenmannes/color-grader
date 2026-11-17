@@ -9,6 +9,18 @@ from typing import Any, Callable
 
 _jobs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
+# One job at a time. Decoding 4K footage, building a grade and rendering an export each use
+# several gigabytes at their peak. Side by side they run a laptop out of memory.
+_turn = threading.Lock()
+
+
+def _friendly(exc: BaseException, label: str) -> str:
+    """A readable message for out-of-memory failures. Windows reports them as WinError 8 or 1450."""
+    win = getattr(exc, "winerror", None)
+    if isinstance(exc, MemoryError) or win in (8, 14, 1450) or getattr(exc, "errno", None) == 12:
+        return (f"Your computer ran out of memory during {label.lower() or 'this job'}. Close other programs and run it again. "
+                "The app runs one job at a time, so a second try usually works.")
+    return str(exc)
 
 
 def start(kind: str, fn: Callable[[Callable[[float, str], None]], Any], label: str = "") -> str:
@@ -24,16 +36,21 @@ def start(kind: str, fn: Callable[[Callable[[float, str], None]], Any], label: s
             job["message"] = message
 
     def run() -> None:
+        if not _turn.acquire(blocking=False):
+            job["message"] = "Waiting for the job before it to finish"
+            _turn.acquire()
+            job["message"] = ""
         try:
             job["result"] = fn(progress)
             job["state"] = "done"
             job["progress"] = 1.0
         except Exception as exc:  # report to the UI, keep the server alive
             job["state"] = "error"
-            job["error"] = str(exc)
+            job["error"] = _friendly(exc, label)
             job["trace"] = traceback.format_exc()
         finally:
             job["finished"] = time.time()
+            _turn.release()
 
     threading.Thread(target=run, daemon=True, name=f"job-{kind}-{jid}").start()
     return jid
