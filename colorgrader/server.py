@@ -327,6 +327,30 @@ def scope(clip: str, kind: str = "waveform", t: float = 0.0, stage: str = "conve
     return Response(scopes.render(kind, _frame(clip, t, stage, 640, shot)), media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/stamp")
+def stamp() -> dict[str, Any]:
+    """Cheap poll for the viewer: it refreshes when an outside tool changed the grade, and follows its focus."""
+    p = project.get()
+    return {"stamp": int(p.state.get("stamp", 0)), "focus": p.focus(), "jobs": len(jobs.active())}
+
+
+@app.put("/api/focus")
+def put_focus(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    p = project.get()
+    p.set_focus(body.get("shot_id"), body.get("t"))
+    return p.focus()
+
+
+@app.get("/api/readout")
+def readout(shot: str, t: float | None = None, stage: str = "graded") -> dict[str, Any]:
+    if stage not in ("source", "converted", "balanced", "graded"):
+        raise HTTPException(400, "stage: source, converted, balanced or graded")
+    try:
+        return project.get().readout(shot, t, stage)
+    except (project.ProjectError, media.MediaError, KeyError) as exc:
+        raise _err(exc, 404)
+
+
 @app.get("/api/thumb")
 def thumb(shot: str) -> Response:
     p = project.get()

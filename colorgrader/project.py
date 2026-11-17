@@ -549,6 +549,55 @@ class Project:
             s["grade"] = model.quantize_shot(g)
         self.touch()
 
+    def readout(self, shot_id: str, t: float | None = None, stage: str = "graded") -> dict[str, Any]:
+        """The numbers a colorist reads off the scopes for one shot: levels, clipping, color, skin. Display percent."""
+        from .color.ycbcr import rgb_to_ycbcr
+        from .grade import skin as skin_mod
+
+        s = self.shot(shot_id)
+        clip = self.clip(s["clip_id"])
+        if t is None:
+            t = s["times"][len(s["times"]) // 2] if s.get("times") else 0.5 * (s["start"] + s["end"])
+        img = np.clip(self.render_frame(clip["id"], float(t), stage, 640, shot_id), 0.0, 1.0).reshape(-1, 3)
+        y, cb, cr = rgb_to_ycbcr(img)
+        sat = np.hypot(cb, cr) * 200.0
+        mids = (y > 0.25) & (y < 0.65)
+        pct = lambda v, q: round(float(np.percentile(v, q)) * 100.0, 1)
+        out: dict[str, Any] = {
+            "shot_id": shot_id, "time": round(float(t), 2), "stage": stage,
+            "luma_percent": {"black_p1": pct(y, 1), "shadows_p10": pct(y, 10), "median": pct(y, 50), "highlights_p90": pct(y, 90), "white_p99": pct(y, 99)},
+            "clipped_percent_of_pixels": {"at_white": round(float((img.min(axis=1) >= 0.995).mean()) * 100, 2),
+                                          "at_black": round(float((img.max(axis=1) <= 0.004).mean()) * 100, 2)},
+            "saturation_percent": {"midtones_mean": round(float(sat[mids].mean()) if mids.any() else float(sat.mean()), 1),
+                                   "peak_p99": round(float(np.percentile(sat, 99)), 1)},
+            "average_color_rgb_percent": [round(float(v) * 100, 1) for v in img.mean(axis=0)],
+            "faces_at_time": len(relight_mod.faces_at(self.face_track(shot_id), float(t))) if not clip["info"]["is_image"] else 0,
+        }
+        data = self.shot_data(shot_id)
+        if len(data.get("skin", [])) >= 30 and stage in ("graded", "balanced"):
+            idt, prof = self.idt(clip)
+            g = model.quantize_shot(s["grade"])
+            sk = pipeline.shot_stage(data["skin"].astype(np.float32), g, pipeline.camera_saturation(prof.get("corrections")))
+            if stage == "graded":
+                sk = pipeline.look_stage(sk, model.at_strength(self.state["look"], self.state["strength"] / 100.0))
+            ang, skin_sat = skin_mod.skin_on_display(sk, self.odt())
+            off = skin_mod.offset_from_line(ang)
+            skin_y = float(np.median(np.clip(self.odt(sk), 0.0, 1.0) @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)))
+            out["skin"] = {"luma_percent": round(skin_y * 100, 1), "saturation_percent": round(float(skin_sat), 1),
+                           "degrees_from_skin_line": round(off, 1),
+                           "leans": "on the line" if abs(off) <= 4 else ("toward yellow-green" if off > 0 else "toward red-magenta")}
+        out["rules"] = [{"rule": r["name"], "status": r["status"], "detail": r["detail"]} for r in s.get("rules") or [] if r["status"] != "pass"]
+        return out
+
+    def set_focus(self, shot_id: str | None, t: float | None = None) -> None:
+        """Which shot an outside tool is working on: the app's viewer follows it. Kept in memory only."""
+        with self.lock:
+            n = int((getattr(self, "_focus", None) or {}).get("n", 0)) + 1
+            self._focus = {"shot_id": shot_id, "t": t, "n": n}
+
+    def focus(self) -> dict[str, Any]:
+        return dict(getattr(self, "_focus", None) or {"shot_id": None, "t": None, "n": 0})
+
     def set_scene(self, shot_id: str, scene: int) -> None:
         with self.lock:
             s = self.shot(shot_id)

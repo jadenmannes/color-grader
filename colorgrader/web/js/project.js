@@ -194,6 +194,27 @@ export function ProjectPage({ ctx }) {
   const clip = shot ? proj.clips.find((c) => c.id === shot.clip_id) : (proj.clips[0] || null);
   useEffect(() => { if (shot && (t < shot.start || t > shot.end)) setT(shot.times && shot.times.length ? shot.times[Math.floor(shot.times.length / 2)] : (shot.start + shot.end) / 2); }, [shot && shot.id]);
   useEffect(() => { if (!stages.includes(after)) setAfter(stages[stages.length - 1]); }, [stages.join(',')]);
+  // Live: an outside tool (the MCP server) may change the grade or move to another shot. Follow it.
+  const lastFocus = useRef(-1);
+  const stampRef = useRef(proj.stamp || 0);
+  stampRef.current = proj.stamp || 0;
+  useEffect(() => {
+    let live = true;
+    const tick = async () => {
+      try {
+        const st = await api.get('/api/stamp');
+        if (!live) return;
+        if (lastFocus.current < 0) lastFocus.current = st.focus.n;
+        if (st.focus.n !== lastFocus.current) {
+          lastFocus.current = st.focus.n;
+          if (st.focus.shot_id) { setSel(st.focus.shot_id); if (st.focus.t != null) setT(st.focus.t); setRightTab('grade'); }
+        }
+        if (st.stamp !== stampRef.current && st.jobs === 0) { await refresh(); setLiveVersion((v) => v + 1); }
+      } catch (e) { /* the app may be restarting */ }
+    };
+    const id = setInterval(tick, 1500);
+    return () => { live = false; clearInterval(id); };
+  }, []);
   useEffect(() => { if (proj.graded) setAfter('graded'); }, [proj.graded]);
 
   const version = useMemo(() => JSON.stringify([proj.look, proj.strength, proj.finish, shot && shot.grade, clip && clip.profile_id, state.settings.output_space, state.settings.max_input_nits, liveVersion]).length + ':' + liveVersion + ':' + (proj.stamp || 0), [proj, shot, clip, state.settings, liveVersion]);

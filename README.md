@@ -131,6 +131,22 @@ A grade fails when it breaks one of these. The build repairs failures on its own
 - **Graded clip** (Export tab): source resolution, 10-bit H.265 for 10-bit sources, tagged Rec.709 so QuickTime, phones and YouTube show the same picture. ProRes 422 HQ and DNxHR HQX are in the format list.
 - **Saved looks**: save the current look with a name, apply it to other footage later.
 
+## Grade with an AI assistant (MCP)
+
+Color Grader includes an MCP server. An assistant such as Claude, in the Claude desktop app or Claude Code on your computer, then grades in the app you have open: it looks at a shot (source and graded picture plus the numbers a colorist reads off the scopes), changes the grade, looks again, and can undo. Every change shows in your viewer within a second or two, and the viewer jumps to the shot the assistant works on.
+
+1. Start the app (`.\start.bat` or `./start.sh`).
+2. Print the setup lines for your computer:
+
+```bash
+uv run python -m colorgrader.mcp --config
+```
+
+3. Paste them where the output says: Claude Desktop's config file (Settings, Developer, Edit Config), or the `claude mcp add` command for Claude Code. Restart Claude Desktop.
+4. Ask, for example: "Grade shot 1 of my interview: warmer skin, darker background, keep it natural."
+
+Tools the assistant gets: `project_status`, `view_shot`, `read_shot`, `get_grade`, `adjust_look`, `adjust_shot`, `set_finish`, `set_strength`, `design_looks`, `apply_look`, `rebuild_grade`, `undo`, `save_look`, `export_video`. The app and the MCP server talk only on 127.0.0.1 and send nothing anywhere by themselves. With an assistant connected, the frames it views (single JPEG stills, 960 pixels wide by default) and the numbers go to the assistant's AI service, like an image you share in a chat. Your video files stay on your computer. The MCP server has to run on the same computer as the app, so a cloud session (Claude Code on the web) cannot reach it.
+
 ## Camera library
 
 Cameras are data. Each camera is one JSON file in `~/ColorGrader/cameras`. Adding a camera needs no code change and no rebuild.
