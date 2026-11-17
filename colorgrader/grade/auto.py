@@ -696,7 +696,12 @@ def enforce_rules(b: Builder, look: dict[str, Any], finish: dict[str, Any], stre
         if "highlights" in bad:
             look["gain"] = [1.0 + (g - 1.0) * 0.85 for g in look["gain"]]
             look["gamma"] = [g - 0.15 * max(float(np.mean(look["gamma"])), 0.0) for g in look["gamma"]]
-        if "color_clip" in bad and b._ease_hue_moves(look):
+        if "color_clip" in bad and look["contrast"] > 1.15:
+            # contrast pushes the weakest channel of strong colors under black: it goes first
+            look["contrast"] = 1.0 + (look["contrast"] - 1.0) * 0.85
+            if look.get("tone_curve"):
+                look["tone_curve"] = [[x, x + 0.85 * (v - x)] for x, v in look["tone_curve"]]
+        elif "color_clip" in bad and b._ease_hue_moves(look):
             pass
         elif bad & {"saturation", "color_clip"}:
             look["saturation"] = 50.0 + (look["saturation"] - 50.0) * 0.85 if look["saturation"] > 50.5 else look["saturation"] - 1.0

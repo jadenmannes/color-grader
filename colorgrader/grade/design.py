@@ -158,7 +158,17 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
     chroma = max(sc["chroma"], 0.01)
     # contrast: a target tonal spread, turned into a ratio against all shots at build time (the look is shared)
     ratio = lambda target, lo=0.88, hi=1.35: (float(target), float(lo), float(hi))
-    hsv_gain = lambda target, lo=0.85, hi=1.25: float(np.clip((target / chroma) ** 0.6, lo, hi))
+    def hsv_for(target: float, lo: float, hi: float, gamma_bias: float = 0.0) -> dict[str, float]:
+        """HSV saturation that reaches the color target without pushing strong colors past full saturation.
+
+        Gain multiplies every saturation, so strong colors clip first: it stays at or under 1.04. Gamma lifts
+        gentle colors most and never takes a color past 1, so it carries the rest of the boost. Less color
+        comes from Gain alone, which never clips.
+        """
+        r = float(np.clip((target / chroma) ** 0.6, lo, hi))
+        # the Gamma part needs the footage's own saturation under the look: build_look() sets it
+        return {"ratio": round(r, 3), "bias": float(gamma_bias), "gain": round(min(r, 1.04), 3), "gamma": round(gamma_bias, 3)}
+
     room_up = _ramp(0.97 - sc["top"], 0.0, 0.12)   # headroom above the brightest tones
     out = []
 
@@ -168,9 +178,9 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "mood": "True colors, healthy skin, gentle contrast. What the day looked like, finished.",
         "score": 0.6 + 0.2 * t["skin"],
         "fits": "A safe base for any interview: skin and whites carry the shot.",
-        "exposure": 0.0, "contrast": ratio(0.50, 0.95, 1.35), "floor": None, "relight": 0.4,
+        "exposure": 0.0, "contrast": ratio(0.50, 0.95, 1.30), "floor": None, "relight": 0.4,
         "tints": {"shadows": [0, 0.0], "midtones": [0, 0.0], "highlights": [40, 0.003]},
-        "hsv": {"gain": hsv_gain(0.115, 0.98, 1.3), "gamma": 0.0},
+        "hsv": hsv_for(0.115, 0.98, 1.3, 0.0),
         "hue_vs_hue": _moves(sc, {120: -6.0, 90: -4.0}), "hue_vs_sat": {},
         "rolloff": {"shadows": 0.9, "highlights": 0.88}, "finish": 1.0,
     })
@@ -199,9 +209,9 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "fits": ("Your light came in cool" if t["cool_light"] > 0.4 else "Gray sky flattens skin" if t["overcast"] > 0.5
                  else "The scene holds autumn color" if t["autumn"] > 0.4 else "The scene has warm light" if t["warm_light"] > 0.5
                  else "Daylight with faces") + ": warmth in the highlights flatters skin.",
-        "exposure": 0.12 * room_up * t["overcast"], "contrast": ratio(0.51, 0.95, 1.38), "floor": None, "relight": 0.5,
+        "exposure": 0.12 * room_up * t["overcast"], "contrast": ratio(0.51, 0.95, 1.32), "floor": None, "relight": 0.5,
         "tints": {"shadows": [25, 0.002], "midtones": [35, 0.004 + 0.003 * t["cool_light"]], "highlights": [42, warmth]},
-        "hsv": {"gain": hsv_gain(0.12, 1.0, 1.35), "gamma": 0.02},
+        "hsv": hsv_for(0.12, 1.0, 1.35, 0.02),
         "hue_vs_hue": moves, "hue_vs_sat": hvs,
         "rolloff": {"shadows": 0.9, "highlights": 0.9}, "finish": 0.85,
     })
@@ -212,9 +222,9 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "mood": "Colors compressed to two: teal shadows and backgrounds, warm skin. Deeper contrast, the modern film look.",
         "score": 0.45 + 0.15 * t["skin"] + 0.15 * t["blue"] + 0.1 * t["hard_light"] + 0.05 * t["greenery"],
         "fits": "Faces against " + ("sky and blue tones" if t["blue"] > 0.4 else "the background") + ": teal behind, warm skin in front separates the speaker.",
-        "exposure": -0.2 * (1.0 - t["low_key"]), "contrast": ratio(0.54, 1.0, 1.45), "floor": None, "relight": 0.7,
+        "exposure": -0.2 * (1.0 - t["low_key"]), "contrast": ratio(0.54, 1.0, 1.38), "floor": None, "relight": 0.7,
         "tints": {"shadows": [195, 0.016 + 0.004 * t["blue"]], "midtones": [30, 0.003], "highlights": [40, 0.012]},
-        "hsv": {"gain": hsv_gain(0.115, 1.0, 1.3), "gamma": 0.0},
+        "hsv": hsv_for(0.115, 1.0, 1.3, 0.0),
         "hue_vs_hue": _moves(sc, {240: -16.0, 210: -8.0, 120: -14.0, 90: -10.0, 60: -8.0, 300: 14.0, 330: 8.0}),
         "hue_vs_sat": {180: 1.06, 210: 1.06},
         "rolloff": {"shadows": 0.85, "highlights": 0.86}, "finish": 1.0,
@@ -227,9 +237,9 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "score": 0.3 + 0.3 * t["overcast"] + 0.2 * t["bright_top"] + 0.1 * t["greenery"] - 0.3 * t["low_key"],
         "fits": ("Flat light" if t["overcast"] > 0.5 else "A bright background" if t["bright_top"] > 0.5 else "This scene")
                 + ": lower exposure and denser color give it weight and calm the background.",
-        "exposure": -0.35 * (1.0 - t["low_key"]), "contrast": ratio(0.54, 1.0, 1.45), "floor": None, "relight": 1.0,
+        "exposure": -0.35 * (1.0 - t["low_key"]), "contrast": ratio(0.54, 1.0, 1.38), "floor": None, "relight": 1.0,
         "tints": {"shadows": [200, 0.008], "midtones": [0, 0.0], "highlights": [45, 0.005]},
-        "hsv": {"gain": hsv_gain(0.125, 1.05, 1.4), "gamma": -0.01},
+        "hsv": hsv_for(0.125, 1.05, 1.4, -0.01),
         "hue_vs_hue": _moves(sc, {120: -8.0, 90: -6.0}), "hue_vs_sat": {120: 0.86, 90: 0.9, 240: 0.92},
         "rolloff": {"shadows": 0.8, "highlights": 0.85}, "finish": 1.0,
     })
@@ -242,9 +252,9 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "score": (0.45 + 0.25 * t["skin"] + 0.2 * t["muted"] + 0.15 * t["soft_light"] + 0.1 * t["green_cast"]) if t["skin"] > 0 else 0.2,
         "fits": ("Faces in flat light" if t["soft_light"] > 0.5 else "Faces in quiet color" if t["muted"] > 0.5 else "An interview")
                 + ": contrast, color and a relight make the speaker pop.",
-        "exposure": -0.1 * (1.0 - t["low_key"]), "contrast": ratio(0.57, 1.0, 1.5), "floor": None, "relight": 0.9,
+        "exposure": -0.1 * (1.0 - t["low_key"]), "contrast": ratio(0.57, 1.0, 1.42), "floor": None, "relight": 0.9,
         "tints": {"shadows": [215, 0.010], "midtones": [300, 0.003], "highlights": [30, 0.010]},
-        "hsv": {"gain": hsv_gain(0.13, 1.05, 1.45), "gamma": 0.02},
+        "hsv": hsv_for(0.13, 1.05, 1.45, 0.02),
         "hue_vs_hue": _moves(sc, {120: -8.0, 90: -6.0}), "hue_vs_sat": {120: 0.9, 150: 0.92},
         "rolloff": {"shadows": 0.85, "highlights": 0.9}, "finish": 1.0,
     })
@@ -257,7 +267,7 @@ def directions(sc: dict[str, Any]) -> list[dict[str, Any]]:
         "fits": "Soft light with room above the brightest tones: the shot takes a lift without clipping.",
         "exposure": 0.25 * room_up * (1.0 - t["high_key"]), "contrast": ratio(0.42, 0.88, 1.15), "floor": 0.045, "relight": 0.25,
         "tints": {"shadows": [210, 0.004], "midtones": [0, 0.0], "highlights": [45, 0.005]},
-        "hsv": {"gain": hsv_gain(0.09, 0.9, 1.12), "gamma": 0.02},
+        "hsv": hsv_for(0.09, 0.9, 1.12, 0.02),
         "hue_vs_hue": _moves(sc, {120: -6.0}), "hue_vs_sat": {120: 0.92, 240: 0.95},
         "rolloff": {"shadows": 0.95, "highlights": 0.85}, "finish": 0.35,
     })
@@ -285,6 +295,29 @@ def _expose(parts: list[np.ndarray], stops: float) -> list[np.ndarray]:
     return parts if g == 1.0 else [W.di_encode(W.di_decode(p) * F32(g)) for p in parts]
 
 
+def hsv_settings(look: dict[str, Any], parts: list[np.ndarray], hsv: dict[str, float]) -> dict[str, float]:
+    """Gain and Gamma of the HSV saturation node for a wanted color ratio, measured on this footage.
+
+    Gain multiplies every saturation, so strong colors clip first: it stays at or under 1.04. Gamma lifts
+    gentle colors most and never takes a color past full saturation, so it carries the rest. In the log
+    working space most colors sit near saturation 0.1, far lower than on a display, so the Gamma that gives
+    the wanted lift is found at the footage's own median saturation.
+    """
+    r = float(hsv.get("ratio", hsv.get("gain", 1.0)))
+    bias = float(hsv.get("bias", hsv.get("gamma", 0.0)))
+    if r <= 1.0:
+        return {"gain": round(r, 3), "gamma": round(bias, 3)}
+    gain = min(r, 1.04)
+    di = pipeline.look_stage(np.concatenate(parts), dict(look, hsv_sat={"gain": 1.0, "gamma": 0.0}))
+    v = di.max(axis=1)
+    s = (v - di.min(axis=1)) / np.maximum(v, 1e-6)
+    s = s[(s > 0.02) & (v > 0.05)]
+    s_med = float(np.clip(np.median(s) if len(s) else 0.12, 0.05, 0.5))
+    e = 1.0 + float(np.log(r / gain)) / float(np.log(s_med))
+    gamma = float(np.clip((1.0 / max(e, 0.5) - 1.0) / 4.0 + bias, -0.05, 0.06))
+    return {"gain": round(gain, 3), "gamma": round(gamma, 3)}
+
+
 def build_look(b: auto.Builder, d: dict[str, Any], polish_amount: float) -> dict[str, Any]:
     """Every number of one direction, fitted to the footage with the same solver as the reference match."""
     exp = round(float(d["exposure"]), 2)
@@ -303,7 +336,7 @@ def build_look(b: auto.Builder, d: dict[str, Any], polish_amount: float) -> dict
                 "hue_vs_hue": [[h, v] for h, v in d["hue_vs_hue"].items()], "hue_vs_sat": [[h, v] for h, v in d["hue_vs_sat"].items()]}
     look, _ = suggest.fit_template(template, parts, skin_e, adapt=False)
     look["exposure"] = exp
-    look["hsv_sat"] = {"gain": round(d["hsv"]["gain"], 3), "gamma": round(d["hsv"]["gamma"], 3)}
+    look["hsv_sat"] = hsv_settings(look, parts, d["hsv"])
     look = auto.finish_tone(b, look, polish_amount * float(d.get("finish", 1.0)))
     look["sat_vs_lum"] = []   # the HSV node already makes saturated colors denser
     look["name"], look["description"], look["source"] = d["name"], d["mood"], "suggestion"

@@ -55,7 +55,9 @@ def _new_zero_share(before: np.ndarray, after: np.ndarray) -> tuple[float, float
     """Pixels whose channel reached zero under the look (bright, other saturated), plus the totals after the look."""
     mx, mn = after.max(axis=1), after.min(axis=1)
     zero = mn <= 0.004
-    fresh = zero & (before.min(axis=1) > 0.004)
+    # fresh: the look took a channel that was clearly there (above 3%) all the way to zero. A color already at
+    # the edge of the display before the look (its weakest channel near zero) belongs to the footage.
+    fresh = zero & (before.min(axis=1) > 0.03)
     bright, mid = mx >= 0.85, (mx >= 0.3) & (mx < 0.85)
     return float((fresh & bright).mean()), float((fresh & mid).mean()), float((zero & bright).mean()), float((zero & mid).mean())
 
