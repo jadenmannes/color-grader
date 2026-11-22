@@ -164,13 +164,19 @@ A grade fails when it breaks one of these. The build repairs failures on its own
 Color Grader includes an MCP server. An assistant such as Claude, in the Claude desktop app or Claude Code on your computer, then grades in the app you have open: it looks at a shot (source and graded picture plus the numbers a colorist reads off the scopes), changes the grade, looks again, and can undo. Every change shows in your viewer within a second or two, and the viewer jumps to the shot the assistant works on.
 
 1. Start the app (`.\start.bat` or `./start.sh`).
-2. Print the setup lines for your computer:
+2. Connect the MCP server. On Windows, run:
+
+```bat
+.\mcp.bat
+```
+
+It registers the server with Claude Code when the `claude` command exists, then prints the lines for Claude Desktop. On macOS and Linux, print the setup lines with:
 
 ```bash
 uv run python -m colorgrader.mcp --config
 ```
 
-3. Paste them where the output says: Claude Desktop's config file (Settings, Developer, Edit Config), or the `claude mcp add` command for Claude Code. Restart Claude Desktop.
+3. For Claude Desktop, paste the printed lines into its config file (Settings, Developer, Edit Config) and restart it. For Claude Code on macOS and Linux, run the printed `claude mcp add` command.
 4. Ask, for example: "Grade shot 1 of my interview: warmer skin, darker background, keep it natural."
 
 Tools the assistant gets:
