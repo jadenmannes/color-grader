@@ -2,6 +2,7 @@ import { html, useState, useEffect, useRef } from '/static/vendor/htm-preact-sta
 import { api } from './api.js';
 import { RecipePanel, ExportPanel } from './recipe.js';
 import { LooksPanel } from './looks.js';
+import { ColorPanel, near } from './colors.js';
 
 export function stageChoices(proj) {
   return proj.graded ? ['converted', 'balanced', 'graded'] : ['converted'];
@@ -88,7 +89,43 @@ function LookTable({ look }) {
     ${(look.hue_vs_hue || []).length ? row('Hue vs Hue', html`<${Points} pts=${look.hue_vs_hue.filter((p) => p[1] !== 0)} unit="°" />`, r.hue_vs_hue) : ''}
     ${((skin.hue_vs_hue || []).length || (skin.hue_vs_sat || []).length) ? row('Skin', html`<div>hue <${Points} pts=${skin.hue_vs_hue} unit="°" /></div><div>sat <${Points} pts=${skin.hue_vs_sat} unit="°" /></div>`, r.skin) : (r.skin ? row('Skin', 'no correction', r.skin) : '')}
     ${(look.sat_vs_sat || []).length ? row('Sat vs Sat', html`<${Points} pts=${look.sat_vs_sat} />`, r.sat_vs_sat) : ''}
+    ${EXTRA.filter(([k, , neutral]) => look[k] !== undefined && !near(look[k], neutral)).map(([k, name, , show]) => row(name, show(look[k]), r[k]))}
+    ${moreChanged(look).length ? row('Also set', `${moreChanged(look).join(', ')}. Details in the Color tab.`, '') : ''}
   </table>`;
+}
+
+const sgn = (v, d = 2) => `${v > 0 ? '+' : ''}${fmt(v, d)}`;
+const EXTRA = [
+  ['temp', 'Temperature', 0, (v) => `${sgn(v)} stops`],
+  ['tint', 'Tint', 0, (v) => `${sgn(v)} stops`],
+  ['offset', 'Offset R G B', [25, 25, 25], (v) => rgb(v, 2)],
+  ['shadows', 'Shadows', 0, (v) => `${sgn(v)} stops`],
+  ['highlights', 'Highlights', 0, (v) => `${sgn(v)} stops`],
+  ['color_boost', 'Color boost', 0, (v) => sgn(v)],
+  ['hue', 'Hue', 0, (v) => `${sgn(v, 1)}°`],
+];
+
+function moreChanged(c) {
+  const out = [];
+  const zones = c.hdr || {};
+  if (Object.values(zones).some((z) => z && (z.exposure || z.temp || z.tint || (z.saturation !== undefined && z.saturation !== 1)))) out.push('HDR zones');
+  const lg = c.log || {};
+  if (['shadow', 'midtone', 'highlight'].some((w) => (lg[w] || []).some((v) => v))) out.push('Log wheels');
+  if (c.rgb_mixer && !near(c.rgb_mixer, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])) out.push('RGB mixer');
+  if (Object.values(c.curves_rgb || {}).some((pts) => (pts || []).some(([x, y]) => Math.abs(x - y) > 1e-9))) out.push('RGB curves');
+  if ((c.hue_vs_lum || []).some(([, v]) => Math.abs(v - 1) > 1e-9)) out.push('Hue vs Lum');
+  const secs = (c.secondaries || []).filter((x) => x.enabled !== false);
+  if (secs.length) out.push(`${secs.length} secondar${secs.length === 1 ? 'y' : 'ies'} (${secs.map((x) => x.name).join(', ')})`);
+  return out;
+}
+
+function trimSummary(trim) {
+  if (!trim) return [];
+  const parts = EXTRA.filter(([k, , neutral]) => trim[k] !== undefined && !near(trim[k], neutral)).map(([k, name, , show]) => `${name} ${show(trim[k])}`);
+  [['exposure', 'Exposure', (v) => `${sgn(v)} stops`], ['contrast', 'Contrast', (v) => fmt(v)], ['saturation', 'Saturation', (v) => fmt(v, 1)]]
+    .forEach(([k, name, show]) => { if (trim[k] !== undefined) parts.push(`${name} ${show(trim[k])}`); });
+  ['lift', 'gamma', 'gain'].forEach((k) => { if (trim[k]) parts.push(`${k[0].toUpperCase() + k.slice(1)} ${rgb(trim[k])}`); });
+  return parts.concat(moreChanged(trim));
 }
 
 function GradeTab({ ctx, shot, onLive }) {
@@ -195,6 +232,7 @@ function GradeTab({ ctx, shot, onLive }) {
           <tr><td>Offset R G B</td><td><div class="mono">${rgb(g.balance.offset, 2)}</div><div class="dim">${reasons.offset || ''}</div></td></tr>
           ${(g.match.contrast !== 1 || g.match.saturation !== 50) ? html`<tr><td>Match</td><td><div class="mono">contrast ${fmt(g.match.contrast)}   saturation ${fmt(g.match.saturation, 1)}</div><div class="dim">${reasons.match || ''}</div></td></tr>` : ''}
           ${(g.match.hue_vs_hue || []).length ? html`<tr><td>Skin trim</td><td><${Points} pts=${g.match.hue_vs_hue} unit="°" /><div class="dim">${reasons.skin || ''}</div></td></tr>` : ''}
+          ${trimSummary(g.trim).length ? html`<tr><td>Own trim</td><td><div class="mono">${trimSummary(g.trim).join('   ')}</div><div class="dim">Set in the Color tab, This shot only.</div></td></tr>` : ''}
         </table>
         <h3>Quality rules for this shot</h3>
         <${Rules} rules=${shot.rules} />
@@ -202,7 +240,8 @@ function GradeTab({ ctx, shot, onLive }) {
     </div>`;
 }
 
-export function GradePanel({ ctx, tab, clip, shot, t, onLive }) {
+export function GradePanel({ ctx, tab, clip, shot, t, onLive, viewer, setViewer }) {
+  if (tab === 'color') return html`<${ColorPanel} ctx=${ctx} clip=${clip} shot=${shot} t=${t} onLive=${onLive} viewer=${viewer} setViewer=${setViewer} />`;
   if (tab === 'recipe') return html`<${RecipePanel} ctx=${ctx} shot=${shot} />`;
   if (tab === 'export') return html`<${ExportPanel} ctx=${ctx} clip=${clip} shot=${shot} />`;
   return html`<${GradeTab} ctx=${ctx} shot=${shot} onLive=${onLive} />`;

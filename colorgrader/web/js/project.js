@@ -84,7 +84,7 @@ function ClipRow({ ctx, clip, shots, sel, onSelect, onAnalyze }) {
     </div>`;
 }
 
-function Viewer({ clip, shot, t, before, after, version, reference, play }) {
+function Viewer({ clip, shot, t, before, after, version, reference, play, mode }) {
   const [split, setSplit] = useState(0.5);
   const box = useRef(null);
   const drag = useRef(false);
@@ -104,6 +104,22 @@ function Viewer({ clip, shot, t, before, after, version, reference, play }) {
   const urlA = '/api/frame?' + qs({ ...base, stage: before });
   const urlB = '/api/frame?' + qs({ ...base, stage: after });
   const refBox = reference && html`<div class="refbox"><img src=${`/api/reference/frame?v=${version}`} /><div class="tag l">Reference</div></div>`;
+  if (mode && mode.kind === 'key') {
+    const keyUrl = '/api/key?' + qs({ clip: clip.id, t: t.toFixed(3), w: 1280, shot: shot ? shot.id : undefined, target: mode.target, index: mode.index, v: version });
+    return html`
+      <div class="viewer-wrap">
+        <div class="viewer"><div class="stage">
+          <img src=${keyUrl} draggable=${false} />
+          <div class="tag l">${mode.label}</div>
+        </div></div>
+        ${refBox}
+      </div>`;
+  }
+  const picking = mode && mode.kind === 'pick';
+  const pickAt = (e) => {
+    const r = box.current.getBoundingClientRect();
+    mode.onPick(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)));
+  };
   if (play) {
     return html`
       <div class="viewer-wrap">
@@ -118,11 +134,11 @@ function Viewer({ clip, shot, t, before, after, version, reference, play }) {
   return html`
     <div class="viewer-wrap">
       <div class="viewer">
-        <div class="stage" ref=${box} onPointerDown=${(e) => { drag.current = true; move(e); }}>
+        <div class=${'stage' + (picking ? ' picking' : '')} ref=${box} onPointerDown=${(e) => { if (picking) { pickAt(e); return; } drag.current = true; move(e); }}>
           <img src=${urlA} draggable=${false} />
           <img class="after" src=${urlB} draggable=${false} style=${{ clipPath: `inset(0 0 0 ${split * 100}%)` }} />
           <div class="handle" style=${{ left: `calc(${split * 100}% - 1px)` }}></div>
-          <div class="tag l">${STAGE_NAMES[before]}</div>
+          <div class="tag l">${picking ? mode.label : STAGE_NAMES[before]}</div>
           <div class="tag r">${STAGE_NAMES[after]}</div>
         </div>
       </div>
@@ -188,7 +204,9 @@ export function ProjectPage({ ctx }) {
   const [rightTab, setRightTab] = useState('analysis');
   const [pathText, setPathText] = useState('');
   const [liveVersion, setLiveVersion] = useState(0);
+  const [viewerMode, setViewerMode] = useState(null);   // color picking or a secondary's key, from the Color tab
   const tDeb = useDebounced(t, 120);
+  useEffect(() => { if (rightTab !== 'color') setViewerMode(null); }, [rightTab]);
 
   const shot = proj.shots.find((s) => s.id === sel) || proj.shots[0] || null;
   const clip = shot ? proj.clips.find((c) => c.id === shot.clip_id) : (proj.clips[0] || null);
@@ -284,7 +302,7 @@ export function ProjectPage({ ctx }) {
         <${ReferenceCard} ctx=${ctx} />
       </div>
       <div class="col center">
-        <${Viewer} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} version=${version} reference=${proj.reference} play=${play} />
+        <${Viewer} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} version=${version} reference=${proj.reference} play=${play} mode=${viewerMode} />
         ${clip && html`<div class="transport">
           ${!clip.info.is_image && proj.graded ? (play
             ? html`<button class="small" onClick=${() => setPlay(null)}>Back to frames</button>`
@@ -301,12 +319,13 @@ export function ProjectPage({ ctx }) {
       </div>
       <div class="col right">
         <div class="tabs" style="border-bottom:1px solid var(--line);padding-left:6px">
-          ${[['analysis', 'Analysis'], ['grade', 'Grade'], ['recipe', 'Recipe'], ['export', 'Export']].map(([id, name]) =>
+          ${[['analysis', 'Analysis'], ['grade', 'Grade'], ['color', 'Color'], ['recipe', 'Recipe'], ['export', 'Export']].map(([id, name]) =>
             html`<button class=${'tab' + (rightTab === id ? ' active' : '')} onClick=${() => setRightTab(id)}>${name}</button>`)}
         </div>
         <div class="scroll">
           ${rightTab === 'analysis' ? html`<${AnalysisPanel} ctx=${ctx} clip=${clip} shot=${shot} />`
-            : html`<${GradePanel} ctx=${ctx} tab=${rightTab} clip=${clip} shot=${shot} t=${tDeb} onLive=${() => setLiveVersion((v) => v + 1)} />`}
+            : html`<${GradePanel} ctx=${ctx} tab=${rightTab} clip=${clip} shot=${shot} t=${tDeb} onLive=${() => setLiveVersion((v) => v + 1)}
+                viewer=${viewerMode} setViewer=${setViewerMode} />`}
         </div>
       </div>
     </div>`;

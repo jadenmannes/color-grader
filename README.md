@@ -47,7 +47,8 @@ A Python backend does all color math in 32-bit float with NumPy and colour-scien
 | 1 Input conversion | per clip | Camera curve and gamut to DaVinci Wide Gamut / Intermediate. Finished Rec.709 pictures enter through the exact inverse of the output conversion. |
 | 2 Balance | per shot | Exposure, white balance, black point. Gain and offset on linear light. Shots with no faces anchor on neutral objects, sky and foliage. |
 | 3 Shot match | per shot | Shots of one scene match each other. Different cameras match each other before the look. |
-| 4 Look | shared | Contrast, lift/gamma/gain, saturation, Lum vs Sat, hue curves. One look for all shots. |
+| 3b Shot trim | per shot | Any color control on one shot only. Empty unless you or an assistant set it. |
+| 4 Look | shared | Every color control below. One look for all shots. |
 | 5 Skin | shared | Keeps skin on the skin tone line. |
 | 6 Finish | shared | Noise reduction, clarity and sharpening. Optional vignette and fine grain. |
 | 7 Output conversion | shared | To Rec.709 with Resolve's DaVinci tone mapping. |
@@ -108,6 +109,32 @@ The interview technique of darkening the frame and keeping the speaker lit. The 
 
 The old template file `colorgrader/data/looks/suggestions.json` stays for template authors (`suggest.suggest_from_templates`). The app no longer proposes from it.
 
+### Color controls
+
+The Color tab, the MCP server and the recipe share one control set. Each control works on the shared look (every shot) or on one shot's own trim. The app applies them in this order, one Resolve node each:
+
+| Control | Resolve tool | Recipe |
+| --- | --- | --- |
+| Exposure, temperature, tint (stops) | Gain on a node with Gamma set to Linear | exact |
+| HDR zones (dark, shadow, light, highlight, specular), each with exposure, saturation, temp and tint | HDR palette | by eye |
+| RGB mixer | RGB Mixer palette | exact |
+| Contrast and pivot | Primaries | exact |
+| Lift, gamma, gain, offset (color wheels) | Primaries | exact |
+| Log wheels: shadow, midtone, highlight, low and high range | Primaries, Log mode | by eye |
+| Shadows, highlights (stops) | Custom curve the app generates | exact points |
+| Custom curve, RGB curves with gang off | Curves, Custom | exact points |
+| Saturation, Lum vs Sat | Primaries and Curves | exact |
+| Color boost (vibrance) | Sat vs Sat curve the app generates | exact |
+| HSV saturation gain and gamma | Primaries in an HSV node | exact |
+| Hue (global), Hue vs Hue, Hue vs Sat | Curves | exact |
+| Hue vs Lum | Curves | by eye |
+| Sat vs Lum, Sat vs Sat | Curves | exact points |
+| Secondaries: hue, saturation and luminance key, then exposure, temp, tint, saturation and hue inside it | Qualifier, HSL | by eye |
+
+Exact: typed into Resolve's math, the recipe values rebuild the app's picture (a test checks this). Exact points: the same points, with Resolve's own spline between them. By eye: Resolve's math for that tool is unpublished, so the recipe gives a starting point and the LUT and export carry the exact result.
+
+Units stay the same everywhere. Exposure, temp, tint, shadows and highlights are in stops. Hue is in degrees: red 0, yellow 60, green 120, cyan 180, blue 240, magenta 300. The primaries use Resolve's own numbers.
+
 ### Quality rules
 
 A grade fails when it breaks one of these. The build repairs failures on its own and lists every fix.
@@ -125,6 +152,7 @@ A grade fails when it breaks one of these. The build repairs failures on its own
 
 - **Viewer**: before and after with a drag slider, next to the reference. Play graded renders a small preview file and plays the clip with the full grade.
 - **Scopes**: waveform, RGB parade, vectorscope with skin tone line, histogram, for before, after and reference side by side.
+- **Color tab**: every control above, live. Color wheels with a level slider and R, G, B fields, curve editors (click to add a point, drag, double-click to remove), HDR zones, the RGB mixer, and secondaries. A secondary starts from a preset (sky, skin, foliage, autumn leaves) or from a color you click in the viewer, and Show key turns the viewer into Resolve's Highlight view. Switch between the look and This shot only. Double-click a control's name to reset it.
 - **Strength slider**: 0 to 100 percent. Recipe, LUTs and export follow it.
 - **Recipe tab**: project color settings, then node by node, every control with its exact value and one short reason. Copy it as text or download it. The large view fits a second screen.
 - **LUT set** (Export tab): the look for Resolve, the look with output conversion, the output conversion alone, and per camera profile an input LUT and an any-editor LUT. A text file in the folder says where each file goes. Size 17, 33 or 65 points (Settings).
@@ -145,7 +173,14 @@ uv run python -m colorgrader.mcp --config
 3. Paste them where the output says: Claude Desktop's config file (Settings, Developer, Edit Config), or the `claude mcp add` command for Claude Code. Restart Claude Desktop.
 4. Ask, for example: "Grade shot 1 of my interview: warmer skin, darker background, keep it natural."
 
-Tools the assistant gets: `project_status`, `view_shot`, `read_shot`, `get_grade`, `adjust_look`, `adjust_shot`, `set_finish`, `set_strength`, `design_looks`, `apply_look`, `rebuild_grade`, `undo`, `save_look`, `export_video`. The app and the MCP server talk only on 127.0.0.1 and send nothing anywhere by themselves. With an assistant connected, the frames it views (single JPEG stills, 960 pixels wide by default) and the numbers go to the assistant's AI service, like an image you share in a chat. Your video files stay on your computer. The MCP server has to run on the same computer as the app, so a cloud session (Claude Code on the web) cannot reach it.
+Tools the assistant gets:
+
+- Look and measure: `project_status`, `view_shot`, `read_shot`, `get_grade`, `list_controls`.
+- Change the grade: `adjust_look` (every control on every shot), `adjust_shot` (balance, plus any control as that shot's own trim), `reset_controls`, `set_finish`, `set_strength`.
+- Secondaries: `sample_color` reads the color under a point, `set_secondary` keys a color (from a point or from ranges) and corrects inside it, `view_key` shows what the key selects.
+- Looks and output: `design_looks`, `apply_look`, `rebuild_grade`, `undo`, `save_look`, `export_video`.
+
+The app and the MCP server talk only on 127.0.0.1 and send nothing anywhere by themselves. With an assistant connected, the frames it views (single JPEG stills, 960 pixels wide by default) and the numbers go to the assistant's AI service, like an image you share in a chat. Your video files stay on your computer. The MCP server has to run on the same computer as the app, so a cloud session (Claude Code on the web) cannot reach it.
 
 ## Camera library
 
@@ -180,6 +215,7 @@ Everything you own sits in `~/ColorGrader`: cameras, settings, saved looks, proj
 - Resolve numbers the Input Hue of its hue curves on its own scale. The recipe places hue points by color name and by position between the six color buttons.
 - The film curve in the recipe is a point table for Resolve's Custom curve. Resolve draws its own spline between the points, and its Sat vs Lum math is unpublished, so both nodes need a check by eye. The LUT route is exact.
 - Vignette window shape and film grain have no typed values in Resolve. The recipe marks them as set by eye. Film Grain needs Resolve Studio.
+- HDR zones, Log wheels, Hue vs Lum and qualifier softness use the app's own math. Resolve's is unpublished. The recipe lists them as starting points to set by eye. The LUT and the export carry the app's exact result.
 - The X-M5 profiles are built from Fujifilm's published F-Log and F-Log2 math. Detection of F-Log against F-Log2 from metadata is untested on real X-M5 files, so the app asks you to confirm the profile when the metadata leaves it open.
 - A 33-point LUT follows the grade within 0.3 percent on average on normal picture content (65 points: about 0.05 percent). The film curve costs a small table a little accuracy. Its largest error sits in the deepest shadows of log footage and at the edge of the display gamut. The node recipe and the app's own export stay exact there.
 - HDR PQ clips convert through a display-to-scene step with no matching Resolve control. Use the input LUT for them.
@@ -200,7 +236,9 @@ uv run pytest
 - `tests/test_grade.py` applies a known grade to a clip, uses the result as the reference and checks the app recovers the settings. It also covers balance, scene match, skin protection and the quality rules.
 - `tests/test_recipe_export.py` types the recipe numbers into Resolve's math and compares with the app's render, checks the `.cube` files against ffmpeg, and compares exported frames and file tags with the preview.
 - `tests/test_suggest.py` covers the look suggestions: three different looks, each inside the quality rules, chosen by the footage.
-- `tests/e2e/run.sh` drives the real add-camera form in a headless browser.
+- `tests/test_controls.py` checks every color control: neutral changes nothing, each control moves only what it should, strength and rounding hold, and the API takes partial edits and rejects bad input.
+- `tests/test_mcp.py` drives the MCP server over stdin and stdout against a running app: every control, shot trims, secondaries with a picked color, the key view and undo.
+- `tests/e2e/run.sh` drives the real add-camera form and the Color tab in a headless browser.
 
 ## Layout
 
