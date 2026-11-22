@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..grade import pipeline
+from ..grade import controls, pipeline
 from . import base
 from .base import curve_table, node, num, rgb, setting
 
@@ -195,6 +195,13 @@ def _clip_group(clip: dict[str, Any], shot: dict[str, Any], ctx: dict[str, Any],
     if curves:
         k += 1
         nodes.append(node(str(k), "SKIN TRIM", "Skin trim for this shot", "Curves", "", curves=curves))
+    trim = g.get("trim") or {}
+    if trim:
+        def add_trim(label, title, tool, how="", settings=None, curves=None, notes=None):
+            nonlocal k
+            k += 1
+            nodes.append(node(str(k), label, title + " (this shot)", tool, how, settings, curves, notes))
+        _control_nodes(trim, {k[5:]: v for k, v in why.items() if k.startswith("trim_")}, add_trim, prefix="TRIM ")
     title = clip["name"]
     if many:
         title += f", shot {shot['index'] + 1}  ({base.timecode(shot['start'], clip['fps'])} to {base.timecode(shot['end'], clip['fps'])})"
@@ -202,6 +209,183 @@ def _clip_group(clip: dict[str, Any], shot: dict[str, Any], ctx: dict[str, Any],
     if shot.get("scene"):
         sub += f". Scene {shot['scene']}" + (", lead shot" if shot.get("is_lead") else "")
     return {"title": title, "subtitle": sub, "notes": notes, "nodes": nodes}
+
+
+CURVE_HOW = ("Curves palette, Custom. Add one point per row and drag it until the readout shows both values. "
+             "On the 0 to 1 scale of the table, 0.5 is the center of the grid. Editable Splines must stay on.")
+SPLINE_NOTE = "Resolve draws its own spline through the points, so the curve between them differs slightly from the app. The LUT route carries the exact curve."
+
+
+def _points_rows(points, decimals: int = 3) -> list[list[str]]:
+    return [[num(x, decimals), num(v, decimals)] for x, v in points]
+
+
+def _control_nodes(c: dict[str, Any], why: dict[str, str], add, prefix: str = "") -> None:
+    """Nodes for one control set, in the order the app applies them (controls.apply). Missing keys count as neutral.
+
+    The look uses it for the timeline nodes, each shot for its own TRIM nodes (prefix "TRIM ").
+    """
+    g = lambda key, default=None: c.get(key, default)
+    lab = lambda name: f"{prefix}{name}"
+    whose = "this shot" if prefix else "the look"
+    exp, temp, tint = float(g("exposure", 0.0) or 0.0), float(g("temp", 0.0) or 0.0), float(g("tint", 0.0) or 0.0)
+    gains = controls.wb_gains(exp, temp, tint)
+    if gains != [1.0, 1.0, 1.0]:
+        parts = [f"{exp:+.2f} stops exposure" if exp else "", f"temp {temp:+.2f} stops" if temp else "", f"tint {tint:+.2f} stops" if tint else ""]
+        add(lab("EXPOSURE"), "Exposure and white balance", "Primaries, node Gamma set to Linear",
+            "Right-click the node, Gamma, Linear. The node then works on linear light: black stays black, like HDR Global exposure. " + BARS_HOW,
+            [setting("Gain", rgb(gains, 3), why.get("exposure", ", ".join(p for p in parts if p).capitalize() + ".")), setting(*LUM_MIX)])
+    hdr = g("hdr") or {}
+    if controls._hdr_active(hdr):
+        items = []
+        for z in controls.ZONES:
+            zs = {**controls.ZONE_NEUTRAL, **(hdr.get(z) or {})}
+            if any(abs(float(zs[k]) - controls.ZONE_NEUTRAL[k]) > 1e-9 for k in controls.ZONE_NEUTRAL):
+                txt = f"Exp {zs['exposure']:+.2f}, Sat {zs['saturation']:.2f}"
+                if zs["temp"] or zs["tint"]:
+                    txt += f", color: temp {zs['temp']:+.2f} and tint {zs['tint']:+.2f} stops"
+                items.append(setting(f"{z.capitalize()} zone", txt, why.get("hdr", "Moves only this band of brightness.")))
+        add(lab("HDR ZONES"), "HDR zones", "HDR palette",
+            "Color page, HDR palette. Each zone wheel has Exp and Sat under it; drag the wheel toward the color for temp and tint.", items,
+            notes=["Set by eye: the app's zones are its own (dark under -3.5 stops, shadow about -2, light about +0.75, highlight about +2.5, "
+                   "specular +4.5 and up, around middle gray). The LUT and the export carry the exact result."])
+    mixer = g("rgb_mixer")
+    if mixer is not None and not controls._is_identity(mixer):
+        add(lab("RGB MIXER"), "RGB mixer", "RGB Mixer palette", "Color page, RGB Mixer. Preserve Luminance off.",
+            [setting(f"{name} output", rgb(row, 3, signed=True), why.get("rgb_mixer", "Channels mixed into each other."))
+             for name, row in zip(("Red", "Green", "Blue"), mixer)])
+    con, piv = float(g("contrast", 1.0)), float(g("pivot", controls.PIVOT))
+    if abs(con - 1.0) > 5e-4:
+        add(lab("CONTRAST"), "Contrast", "Primaries", ADJ_HOW, [
+            setting("Contrast", num(con, 3), why.get("contrast", f"Contrast of {whose}.")),
+            setting("Pivot", num(piv, 3), "Middle gray in DaVinci Intermediate is 0.336. Contrast turns around the pivot."),
+        ])
+    tone = []
+    lift, gamma, gain, offset = g("lift", [0.0] * 3), g("gamma", [0.0] * 3), g("gain", [1.0] * 3), g("offset", [25.0] * 3)
+    if any(abs(v) > 5e-4 for v in lift):
+        tone.append(setting("Lift", rgb(lift, 3, signed=True), why.get("lift", "Shadow level and shadow color.")))
+    if any(abs(v) > 5e-4 for v in gamma):
+        tone.append(setting("Gamma", rgb(gamma, 3, signed=True), why.get("gamma", "Midtone level and color.")))
+    if any(abs(v - 1.0) > 5e-4 for v in gain):
+        tone.append(setting("Gain", rgb(gain, 3), why.get("gain", "Highlight level and color.")))
+    if any(abs(v - 25.0) > 5e-3 for v in offset):
+        tone.append(setting("Offset", rgb(offset, 2), why.get("offset", "Every tone moved alike. 10 points is one stop.")))
+    if tone:
+        add(lab("TONE COLOR"), "Lift, gamma, gain, offset", "Primaries", BARS_HOW, tone + [setting(*LUM_MIX)])
+    lg = g("log") or {}
+    if controls._log_active(lg):
+        items = [setting(f"{w.capitalize()} wheel", rgb(lg.get(w, [0, 0, 0]), 3, signed=True), why.get("log", "Offset inside this range of brightness."))
+                 for w in ("shadow", "midtone", "highlight") if any(abs(v) > 1e-9 for v in lg.get(w, [0, 0, 0]))]
+        items += [setting("Low Range", num(lg.get("low_range", controls.LOG_LOW), 3), "Border between shadows and midtones."),
+                  setting("High Range", num(lg.get("high_range", controls.LOG_HIGH), 3), "Border between midtones and highlights.")]
+        add(lab("LOG WHEELS"), "Log wheels", "Primaries, Log mode",
+            "Primaries palette, switch the mode to Log. Type the values under the Shadow, Midtone and Highlight wheels.", items,
+            notes=["Set by eye: the app's falloff around Low Range and High Range is its own. The LUT and the export carry the exact result."])
+    sh, hl = float(g("shadows", 0.0) or 0.0), float(g("highlights", 0.0) or 0.0)
+    if sh or hl:
+        add(lab("SHADOWS HIGHLIGHTS"), "Shadows and highlights", "Curves", "", curves=[curve_table(
+            "Custom", ["Input", "Output"], _points_rows(controls.shadows_highlights_points(sh, hl), 4),
+            why.get("shadows", f"Shadows {sh:+.2f} stops, highlights {hl:+.2f} stops. Black, middle gray and white stay."), CURVE_HOW)],
+            notes=["The app's exact form of the Shadows and Highlights sliders. " + SPLINE_NOTE])
+    tc = g("tone_curve") or []
+    if tc and any(abs(v - x) > 5e-4 for x, v in tc):
+        add(lab("FILM CURVE"), "Custom curve", "Curves", "", curves=[curve_table(
+            "Custom", ["Input", "Output"], _points_rows(tc), why.get("tone_curve", "Steeper midtones with soft ends: contrast with no new clipping."),
+            CURVE_HOW)], notes=[SPLINE_NOTE])
+    crv = g("curves_rgb") or {}
+    rgb_tables = [curve_table(f"Custom {name}", ["Input", "Output"], _points_rows(crv.get(ch)),
+                              why.get("curves_rgb", f"The {name.lower()} channel on its own."),
+                              "Curves palette, Custom. Turn gang off (the link icon), pick the channel, then add the points.")
+                  for ch, name in (("r", "Red"), ("g", "Green"), ("b", "Blue")) if crv.get(ch) and any(abs(v - x) > 5e-4 for x, v in crv[ch])]
+    if rgb_tables:
+        add(lab("RGB CURVES"), "RGB curves, gang off", "Curves", "", curves=rgb_tables, notes=[SPLINE_NOTE])
+    sat_items, sat_curves = [], []
+    sat = float(g("saturation", 50.0))
+    if abs(sat - 50.0) > 0.05:
+        sat_items.append(setting("Sat", num(sat, 1), why.get("saturation", "Overall saturation.")))
+    if not base.is_neutral_curve(g("lum_vs_sat"), 1.0):
+        sat_curves.append(curve_table("Lum vs Sat", ["Input Lum", "Saturation"], _points_rows(g("lum_vs_sat")),
+                                      why.get("lum_vs_sat", "Less color in deep shadows and bright highlights."),
+                                      "Curves palette, Lum vs Sat. Click the curve to add a point, then type both values in the fields below."))
+    if sat_items or sat_curves:
+        add(lab("SATURATION"), "Saturation and its roll-off", "Primaries and Curves", ADJ_HOW if sat_items else "", sat_items, sat_curves)
+    cb = float(g("color_boost", 0.0) or 0.0)
+    if cb:
+        add(lab("COLOR BOOST"), "Color boost", "Curves", "", curves=[curve_table(
+            "Sat vs Sat", ["Input Sat", "Output Sat"], _points_rows(controls.color_boost_points(cb), 4),
+            why.get("color_boost", f"Color boost {cb:+.2f}: gentle colors gain the most, strong colors stay."),
+            "Curves palette, Sat vs Sat. Click the curve to add a point, then type both values in the fields below.")],
+            notes=["The app's exact form of Color Boost. Resolve's own Color Boost knob does the same by eye."])
+    hs = g("hsv_sat") or {}
+    if abs(float(hs.get("gain", 1.0)) - 1.0) > 5e-4 or abs(float(hs.get("gamma", 0.0))) > 5e-4:
+        gn, gm = float(hs.get("gain", 1.0)), float(hs.get("gamma", 0.0))
+        items = [setting("Node Color Space", "HSV", "Right-click the node, Color Space, HSV. Saturation then darkens colors as it adds, like film."),
+                 setting("Channels", "1 and 3 off", "Right-click the node, Channels: untick 1 and 3. Only saturation changes.")]
+        if abs(gn - 1.0) > 5e-4:
+            items.append(setting("Gain", rgb([gn, gn, gn], 3), why.get("hsv_gain", "Gain lifts the strongest colors most.")))
+        if abs(gm) > 5e-4:
+            items.append(setting("Gamma", rgb([gm, gm, gm], 3, signed=True), why.get("hsv_gamma", "Gamma lifts gentle colors such as skin most.")))
+        items.append(setting(*LUM_MIX))
+        add(lab("SAT HSV"), "Film-style saturation", "Primaries in an HSV node", BARS_HOW, items)
+    hvh = controls.hue_points(g("hue_vs_hue"), g("hue", 0.0))
+    pal = _hue_curves(g("hue_vs_sat"), hvh,
+                      why.get("hue_vs_sat", "Color families trimmed toward the reference palette."),
+                      why.get("hue_vs_hue", "Color families turned toward the look's palette."
+                              + (f" Every color turned {float(g('hue', 0.0)):+.1f} degrees." if g("hue") else "")))
+    if pal:
+        add(lab("PALETTE"), "Palette: color families", "Curves", "", curves=pal)
+    if not base.is_neutral_curve(g("hue_vs_lum"), 1.0):
+        add(lab("HUE VS LUM"), "Brightness of color families", "Curves", "", curves=[curve_table(
+            "Hue vs Lum", ["Color", "Hue angle", "Luminance", "Role"], _hue_rows(g("hue_vs_lum"), "sat"),
+            why.get("hue_vs_lum", "Darker or brighter color families; grays stay."), HUE_HOW)],
+            notes=["Set by eye: Resolve's Hue vs Lum weighs color differently. The LUT and the export carry the exact result."])
+    skin = g("skin") or {}
+    sk = _hue_curves(skin.get("hue_vs_sat"), skin.get("hue_vs_hue"), why.get("skin", "Keeps skin healthy under the look."),
+                     why.get("skin", "Returns skin to the skin tone line under the look."))
+    if sk:
+        add(lab("SKIN"), "Skin protection", "Curves", "", curves=sk,
+            notes=["Check on the vectorscope with the skin tone line switched on. Skin sits on the line."])
+    if not base.is_neutral_curve(g("sat_vs_lum"), 1.0):
+        add(lab("DENSITY"), "Color density", "Curves", "", curves=[curve_table(
+            "Sat vs Lum", ["Input Sat", "Lum"], _points_rows(g("sat_vs_lum")),
+            why.get("sat_vs_lum", "Strong colors get a little darker and richer. Skin and gentle colors stay untouched."),
+            "Curves palette, Sat vs Lum. Click the curve to add a point, then type both values in the fields below.")],
+            notes=["Resolve's own Sat vs Lum math is unpublished. Compare the strongest colors with the app and trim the last two points by eye."])
+    if not base.is_neutral_curve(g("sat_vs_sat"), 1.0):
+        add(lab("LIMIT"), "Saturation limit", "Curves", "", curves=[curve_table(
+            "Sat vs Sat", ["Input Sat", "Output Sat"], _points_rows(g("sat_vs_sat")),
+            why.get("sat_vs_sat", "Safety limit: bends extreme colors under the display gamut. Normal colors pass untouched."),
+            "Curves palette, Sat vs Sat. Click the curve to add a point, then type both values in the fields below.")])
+    for i, sec in enumerate(g("secondaries") or []):
+        if not controls.secondary_active(sec):
+            continue
+        adj = {**controls.SEC_ADJUST_NEUTRAL, **(sec.get("adjust") or {})}
+        items = []
+        if sec.get("hue"):
+            hc, hw, hsft = sec["hue"]
+            items.append(setting("Qualifier Hue", f"Center {hc:.0f} degrees ({base.hue_label(hc)}, about {hc / 3.6:.1f} on Resolve's 0 to 100 scale), "
+                                 f"Width {hw:.0f} degrees, Soft {hsft:.0f} degrees", "The color family this correction works on."))
+        if sec.get("sat"):
+            lo, hi, sft = sec["sat"]
+            items.append(setting("Qualifier Sat", f"Low {lo:.3f}, High {hi:.3f}, Soft {sft:.3f} (working-space chroma)",
+                                 "Leaves grays and colors outside this saturation alone."))
+        if sec.get("lum"):
+            lo, hi, sft = sec["lum"]
+            items.append(setting("Qualifier Lum", f"Low {lo * 100:.0f}, High {hi * 100:.0f}, Soft {sft * 100:.0f}",
+                                 "Brightness range, DaVinci Intermediate times 100."))
+        if sec.get("invert"):
+            items.append(setting("Invert", "On", "The correction works outside the key."))
+        sg = controls.wb_gains(adj["exposure"], adj["temp"], adj["tint"])
+        if sg != [1.0, 1.0, 1.0]:
+            items.append(setting("Gain on a linear node", rgb(sg, 3), f"Exposure {adj['exposure']:+.2f}, temp {adj['temp']:+.2f}, tint {adj['tint']:+.2f} stops "
+                                 "inside the key. Right-click the node, Gamma, Linear."))
+        if abs(adj["saturation"] - 1.0) > 1e-9:
+            items.append(setting("Sat", num(50.0 * adj["saturation"], 1), "Saturation inside the key."))
+        if abs(adj["hue"]) > 1e-9:
+            items.append(setting("Hue vs Hue", f"every point {adj['hue']:+.1f}", "Turns the keyed color."))
+        add(lab(f"SEC {i + 1}"), f"Secondary: {sec.get('name') or 'qualifier'}", "Qualifier HSL in its own node",
+            "Add a serial node, Qualifier palette, HSL. Turn on Highlight to see the key, then set the ranges below.", items,
+            notes=["Qualifier ranges are a starting point: refine them by eye with Highlight on. The LUT and the export carry the exact key."])
 
 
 def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
@@ -227,80 +411,7 @@ def _timeline_nodes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
             add("NR", "Noise reduction", "Not in the free edition", "",
                 [setting("Noise Reduction", "Needs Resolve Studio",
                          f"The app cleans camera noise at {level:.0f}%. Two ways around it: export the graded clip from this app, or leave the noise in.")])
-    if abs(float(look.get("exposure", 0.0))) > 1e-9:
-        g = pipeline.exposure_gain(look["exposure"])
-        add("EXPOSURE", "Look exposure", "Primaries, node Gamma set to Linear",
-            "Right-click the node, Gamma, Linear. The node then works on linear light: black stays black, like HDR Global exposure. " + BARS_HOW,
-            [setting("Gain", rgb([g, g, g], 3), why.get("exposure", f"{look['exposure']:+.2f} stops for the whole look.")),
-             setting(*LUM_MIX)])
-    if abs(look["contrast"] - 1.0) > 5e-4:
-        add("CONTRAST", "Look contrast", "Primaries", ADJ_HOW, [
-            setting("Contrast", num(look["contrast"], 3), why.get("contrast", "Contrast of the look.")),
-            setting("Pivot", num(look["pivot"], 3), "Middle gray in DaVinci Intermediate. Your exposure stays where the balance put it."),
-        ])
-    tone = []
-    if any(abs(v) > 5e-4 for v in look["lift"]):
-        tone.append(setting("Lift", rgb(look["lift"], 3, signed=True), why.get("lift", "Shadow level and shadow color of the look.")))
-    if any(abs(v) > 5e-4 for v in look["gamma"]):
-        tone.append(setting("Gamma", rgb(look["gamma"], 3, signed=True), why.get("gamma", "Midtone color of the look.")))
-    if any(abs(v - 1.0) > 5e-4 for v in look["gain"]):
-        tone.append(setting("Gain", rgb(look["gain"], 3), why.get("gain", "Highlight color of the look.")))
-    if tone:
-        add("TONE COLOR", "Shadow, midtone and highlight color", "Primaries", BARS_HOW, tone + [setting(*LUM_MIX)])
-    if look.get("tone_curve") and any(abs(v - x) > 5e-4 for x, v in look["tone_curve"]):
-        rows = [[num(x, 3), num(v, 3)] for x, v in look["tone_curve"]]
-        add("FILM CURVE", "Film-style contrast curve", "Curves", "", curves=[curve_table(
-            "Custom", ["Input", "Output"], rows,
-            why.get("tone_curve", "Steeper midtones with soft ends: contrast with no new clipping."),
-            "Curves palette, Custom, all channels ganged. Add one point per row and drag it until the readout shows both values. "
-            "On the 0 to 1 scale of the table, 0.5 is the center of the grid. Editable Splines must stay on.")],
-            notes=["Resolve draws its own spline through the points, so the curve between them differs slightly from the app. "
-                   "The LUT route carries the exact curve."])
-    sat_items, sat_curves = [], []
-    if abs(look["saturation"] - 50.0) > 0.05:
-        sat_items.append(setting("Sat", num(look["saturation"], 1), why.get("saturation", "Overall saturation of the look.")))
-    if not base.is_neutral_curve(look.get("lum_vs_sat"), 1.0):
-        rows = [[num(x, 3), num(v, 3)] for x, v in look["lum_vs_sat"]]
-        sat_curves.append(curve_table("Lum vs Sat", ["Input Lum", "Saturation"], rows,
-                                      why.get("lum_vs_sat", "Less color in deep shadows and bright highlights."),
-                                      "Curves palette, Lum vs Sat. Click the curve to add a point, then type both values in the fields below."))
-    if sat_items or sat_curves:
-        add("SATURATION", "Saturation and its roll-off", "Primaries and Curves", ADJ_HOW if sat_items else "", sat_items, sat_curves)
-    hs = look.get("hsv_sat") or {}
-    if abs(float(hs.get("gain", 1.0)) - 1.0) > 5e-4 or abs(float(hs.get("gamma", 0.0))) > 5e-4:
-        g, gm = float(hs.get("gain", 1.0)), float(hs.get("gamma", 0.0))
-        items = [setting("Node Color Space", "HSV", "Right-click the node, Color Space, HSV. Saturation then darkens colors as it adds, like film."),
-                 setting("Channels", "1 and 3 off", "Right-click the node, Channels: untick 1 and 3. Only saturation changes.")]
-        if abs(g - 1.0) > 5e-4:
-            items.append(setting("Gain", rgb([g, g, g], 3), why.get("hsv_gain", "Gain lifts the strongest colors most.")))
-        if abs(gm) > 5e-4:
-            items.append(setting("Gamma", rgb([gm, gm, gm], 3, signed=True), why.get("hsv_gamma", "Gamma lifts gentle colors such as skin most.")))
-        items.append(setting(*LUM_MIX))
-        add("SAT HSV", "Film-style saturation", "Primaries in an HSV node", BARS_HOW, items)
-    pal = _hue_curves(look.get("hue_vs_sat"), look.get("hue_vs_hue"),
-                      why.get("hue_vs_sat", "Color families trimmed toward the reference palette."),
-                      why.get("hue_vs_hue", "Color families nudged toward the hues of the reference."))
-    if pal:
-        add("PALETTE", "Palette: color families", "Curves", "", curves=pal)
-    skin = look.get("skin") or {}
-    sk = _hue_curves(skin.get("hue_vs_sat"), skin.get("hue_vs_hue"), why.get("skin", "Keeps skin healthy under the look."),
-                     why.get("skin", "Returns skin to the skin tone line under the look."))
-    if sk:
-        add("SKIN", "Skin protection", "Curves", "", curves=sk,
-            notes=["Check on the vectorscope with the skin tone line switched on. Skin sits on the line."])
-    if not base.is_neutral_curve(look.get("sat_vs_lum"), 1.0):
-        rows = [[num(x, 3), num(v, 3)] for x, v in look["sat_vs_lum"]]
-        add("DENSITY", "Color density", "Curves", "", curves=[curve_table(
-            "Sat vs Lum", ["Input Sat", "Lum"], rows,
-            why.get("sat_vs_lum", "Strong colors get a little darker and richer. Skin and gentle colors stay untouched."),
-            "Curves palette, Sat vs Lum. Click the curve to add a point, then type both values in the fields below.")],
-            notes=["Resolve's own Sat vs Lum math is unpublished. Compare the strongest colors with the app and trim the last two points by eye."])
-    if not base.is_neutral_curve(look.get("sat_vs_sat"), 1.0):
-        rows = [[num(x, 3), num(v, 3)] for x, v in look["sat_vs_sat"]]
-        add("LIMIT", "Saturation limit", "Curves", "", curves=[curve_table(
-            "Sat vs Sat", ["Input Sat", "Output Sat"], rows,
-            why.get("sat_vs_sat", "Safety limit: bends extreme colors under the display gamut. Normal colors pass untouched."),
-            "Curves palette, Sat vs Sat. Click the curve to add a point, then type both values in the fields below.")])
+    _control_nodes(look, why, add)
     fin = ctx["finish"]
     vig, grain = fin.get("vignette") or {}, fin.get("grain") or {}
     if vig.get("enabled") and vig.get("amount", 0) > 0:

@@ -10,6 +10,7 @@ import copy
 from typing import Any
 
 from ..color import working as W
+from . import controls
 
 PIVOT = round(W.MID_GRAY, 3)  # 0.336, middle gray in DaVinci Intermediate
 
@@ -27,6 +28,7 @@ def neutral_shot() -> dict[str, Any]:
     return {
         "balance": {"gain": [1.0, 1.0, 1.0], "offset": [25.0, 25.0, 25.0]},
         "match": {"contrast": 1.0, "pivot": PIVOT, "saturation": 50.0, "hue_vs_hue": [], "hue_vs_sat": []},
+        "trim": {},   # this shot's own color controls (a partial set, see controls.py), after the match
         "reasons": {},
     }
 
@@ -52,6 +54,8 @@ def neutral_look() -> dict[str, Any]:
         "hsv_sat": {"gain": 1.0, "gamma": 0.0},   # HSV node, channels 1 and 3 off: saturation that darkens like film
         "tone_curve": [],   # [[input, output], ...] custom curve on all channels: the film-style contrast curve
         "sat_vs_lum": [],   # [[input saturation 0..1, luminance multiplier], ...] color density
+        **controls.neutral(),   # temp, tint, HDR zones, RGB mixer, offset, log wheels, shadows, highlights,
+                                # RGB curves, hue, color boost, hue vs lum, secondaries
         "reasons": {},
     }
 
@@ -80,7 +84,34 @@ def quantize_shot(shot: dict[str, Any]) -> dict[str, Any]:
     s["match"]["saturation"] = r(s["match"]["saturation"], "saturation")
     s["match"]["hue_vs_hue"] = [[r(a, "curve_in"), r(b, "curve_in")] for a, b in (s["match"].get("hue_vs_hue") or [])]
     s["match"]["hue_vs_sat"] = [[r(a, "curve_in"), r(b, "curve_value")] for a, b in (s["match"].get("hue_vs_sat") or [])]
+    s["trim"] = quantize_controls(s.get("trim") or {})
     return s
+
+
+def quantize_controls(c: dict[str, Any]) -> dict[str, Any]:
+    """Round a partial control set (a shot trim): only the keys present, each the way the recipe prints it."""
+    k = copy.deepcopy(c)
+    if "contrast" in k:
+        k["contrast"] = r(k["contrast"], "contrast")
+    if "pivot" in k:
+        k["pivot"] = r(k["pivot"], "pivot")
+    for key in ("lift", "gamma", "gain"):
+        if key in k:
+            k[key] = [r(v, key) for v in k[key]]
+    if "saturation" in k:
+        k["saturation"] = r(k["saturation"], "saturation")
+    if "exposure" in k:
+        k["exposure"] = round(float(k["exposure"] or 0.0), 2)
+    if "hsv_sat" in k:
+        hs = k["hsv_sat"] or {}
+        k["hsv_sat"] = {"gain": r(hs.get("gain", 1.0), "gain"), "gamma": r(hs.get("gamma", 0.0), "gamma")}
+    for key, kin in (("lum_vs_sat", "lum_in"), ("hue_vs_sat", "curve_in"), ("sat_vs_sat", "lum_in"), ("tone_curve", "lum_in"),
+                     ("sat_vs_lum", "lum_in")):
+        if key in k:
+            k[key] = _q_points(k[key], kin)
+    if "hue_vs_hue" in k:
+        k["hue_vs_hue"] = _q_points(k["hue_vs_hue"], "curve_in", "curve_in")
+    return controls.quantize(k)
 
 
 def _q_points(points, kin: str, kval: str = "curve_value"):
@@ -106,6 +137,7 @@ def quantize_look(look: dict[str, Any]) -> dict[str, Any]:
     skin = k.get("skin") or {}
     k["skin"] = {"hue_vs_hue": _q_points(skin.get("hue_vs_hue"), "curve_in", "curve_in"),
                  "hue_vs_sat": _q_points(skin.get("hue_vs_sat"), "curve_in")}
+    k.update(controls.quantize({key: k.get(key, val) for key, val in controls.neutral().items()}))
     return k
 
 
@@ -130,6 +162,7 @@ def at_strength(look: dict[str, Any], strength: float) -> dict[str, Any]:
     skin = look.get("skin") or {}
     k["skin"] = {"hue_vs_hue": [[x, a * v] for x, v in skin.get("hue_vs_hue", [])],
                  "hue_vs_sat": [[x, 1.0 + a * (v - 1.0)] for x, v in skin.get("hue_vs_sat", [])]}
+    k.update(controls.scale({key: look.get(key, val) for key, val in controls.neutral().items()}, a))
     return quantize_look(k)
 
 
@@ -145,4 +178,4 @@ def is_neutral_look(look: dict[str, Any]) -> bool:
     hue = all(abs(v) < 1e-9 for _, v in look.get("hue_vs_hue", []))
     skin = look.get("skin") or {}
     skin_ok = all(abs(v) < 1e-9 for _, v in skin.get("hue_vs_hue", [])) and all(abs(v - 1.0) < 1e-9 for _, v in skin.get("hue_vs_sat", []))
-    return flat and curves and hue and skin_ok
+    return flat and curves and hue and skin_ok and controls.is_neutral(look)

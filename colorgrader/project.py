@@ -24,6 +24,7 @@ from .color import working as W
 from .color.transforms import InputTransform, OutputTransform, input_transform_for
 from .color.ycbcr import signal_to_absolute
 from .grade import model, pipeline
+from .grade import controls as controls_mod
 from .grade import relight as relight_mod
 
 F32 = np.float32
@@ -545,7 +546,10 @@ class Project:
             g = model.neutral_shot()
             g["balance"].update({k: v for k, v in (grade.get("balance") or {}).items() if k in g["balance"]})
             g["match"].update({k: v for k, v in (grade.get("match") or {}).items() if k in g["match"]})
+            trim = grade["trim"] if "trim" in grade else (s.get("grade") or {}).get("trim", {})
+            g["trim"] = {k: v for k, v in (trim or {}).items() if k in controls_mod.full_neutral()}
             g["reasons"] = dict(s.get("grade", {}).get("reasons", {}))
+            g["reasons"].update({k: str(v) for k, v in (grade.get("reasons") or {}).items() if k.startswith("trim_")})
             s["grade"] = model.quantize_shot(g)
         self.touch()
 

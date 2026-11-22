@@ -71,14 +71,17 @@ class Builder:
                 "finished": idt.curve.kind == "display", "cam_sat": pipeline.camera_saturation(prof.get("corrections")),
                 "wb": s["measure"]["white_balance"], "duration": max(s["end"] - s["start"], 0.04),
                 "group": (clip.get("camera_id"), clip.get("profile_id")), "trim": 0.0, "cast": None,
+                "color_trim": copy.deepcopy((s.get("grade") or {}).get("trim") or {}),   # the shot's own color controls
             })
 
     def _balance(self, it: dict[str, Any]) -> None:
         g = balance.balance_shot(it["data"]["sample"], it["skin"], it["wb"], it["finished"], cast=it["cast"], exposure_trim=it["trim"])
         keep = it.get("grade", {}).get("match")
+        color_trim = it.get("grade", {}).get("trim", it.get("color_trim") or {})
         skin_reason = it.get("grade", {}).get("reasons", {}).get("skin")
         match_reason = it.get("grade", {}).get("reasons", {}).get("match")
         it["grade"] = g
+        it["grade"]["trim"] = copy.deepcopy(color_trim)   # a rebuild keeps the shot's own color controls
         if keep:
             it["grade"]["match"] = keep
         if skin_reason:

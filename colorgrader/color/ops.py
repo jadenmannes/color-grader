@@ -198,14 +198,33 @@ def tone_curve(x: np.ndarray, points) -> np.ndarray:
     return (eval_unit(points, xc, 0.0) + (x - xc)).astype(F32, copy=False)
 
 
-def hsl_curves(x: np.ndarray, hue_vs_hue=None, hue_vs_sat=None, lum_vs_sat=None, sat_vs_sat=None, sat_vs_lum=None) -> np.ndarray:
-    """Hue vs Hue (degrees of rotation), Hue vs Sat, Lum vs Sat, Sat vs Sat and Sat vs Lum (multipliers).
+def channel_curves(x: np.ndarray, red=None, green=None, blue=None) -> np.ndarray:
+    """Custom curves with gang off: one curve per channel. Same extension rule as tone_curve()."""
+    if not (red or green or blue):
+        return x
+    out = np.array(x, dtype=F32, copy=True)
+    for c, points in enumerate((red, green, blue)):
+        if points:
+            out[..., c] = tone_curve(out[..., c], points)
+    return out
 
-    Points are (input, value). Hue inputs are degrees on the usual color wheel.
+
+HUE_LUM_CHROMA = 0.05   # a color counts in full for Hue vs Lum from this chroma up; grays have no hue to key on
+
+
+def hsl_curves(x: np.ndarray, hue_vs_hue=None, hue_vs_sat=None, lum_vs_sat=None, sat_vs_sat=None, sat_vs_lum=None,
+               hue_vs_lum=None) -> np.ndarray:
+    """Hue vs Hue (degrees of rotation), Hue vs Sat, Lum vs Sat, Sat vs Sat, Sat vs Lum and Hue vs Lum (multipliers).
+
+    Points are (input, value). Hue inputs are degrees on the usual color wheel. Hue vs Lum scales the luminance
+    of a color family, in full for clear colors and fading out toward gray.
     """
-    if not (hue_vs_hue or hue_vs_sat or lum_vs_sat or sat_vs_sat or sat_vs_lum):
+    if not (hue_vs_hue or hue_vs_sat or lum_vs_sat or sat_vs_sat or sat_vs_lum or hue_vs_lum):
         return x
     lum, c1, c2, hue, chroma = hsl_split(x)
+    if hue_vs_lum:
+        w = np.clip(chroma / F32(HUE_LUM_CHROMA), 0.0, 1.0)
+        lum = lum * (F32(1.0) + (eval_periodic(hue_vs_lum, hue, 1.0) - F32(1.0)) * w)
     if sat_vs_lum:
         lum = lum * eval_unit(sat_vs_lum, chroma, 1.0)
     scale = np.ones_like(lum)

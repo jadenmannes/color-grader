@@ -19,7 +19,7 @@ import numpy as np
 
 from ..color import ops
 from ..color import working as W
-from . import relight
+from . import controls, relight
 from ..color.transforms import InputTransform, OutputTransform, correction_gains
 from . import model
 
@@ -79,33 +79,21 @@ def shot_stage(lin: np.ndarray, shot: dict[str, Any], cam_sat: float = 50.0) -> 
     m = shot["match"]
     di = ops.contrast(di, m["contrast"], m.get("pivot", model.PIVOT))
     di = ops.saturation(di, m["saturation"])
-    return ops.hsl_curves(di, hue_vs_hue=m.get("hue_vs_hue"), hue_vs_sat=m.get("hue_vs_sat"))
+    di = ops.hsl_curves(di, hue_vs_hue=m.get("hue_vs_hue"), hue_vs_sat=m.get("hue_vs_sat"))
+    trim = shot.get("trim")
+    if trim:   # this shot's own color controls, after the match and before the shared look
+        di = controls.apply(di, trim)
+    return di
 
 
 def exposure_gain(stops: float) -> float:
     """Gain of the look's exposure node, rounded as the recipe prints it."""
-    return round(2.0 ** float(stops), 3)
+    return controls.wb_gains(stops)[0]
 
 
 def look_stage(di: np.ndarray, look: dict[str, Any]) -> np.ndarray:
-    """Steps 5 and 6 on DaVinci Intermediate values."""
-    if look.get("exposure"):
-        # a node in linear gamma with Gain: exposure the way a camera sees it, black stays black
-        g = exposure_gain(look["exposure"])
-        if g != 1.0:
-            di = W.di_encode(W.di_decode(di) * F32(g))
-    di = ops.contrast(di, look["contrast"], look.get("pivot", model.PIVOT))
-    di = ops.lggo(di, look["lift"], look["gamma"], look["gain"])
-    di = ops.tone_curve(di, look.get("tone_curve"))
-    di = ops.saturation(di, look["saturation"])
-    di = ops.hsl_curves(di, lum_vs_sat=look.get("lum_vs_sat"))
-    hs = look.get("hsv_sat") or {}
-    di = ops.hsv_saturation(di, float(hs.get("gain", 1.0)), float(hs.get("gamma", 0.0)))
-    di = ops.hsl_curves(di, hue_vs_sat=look.get("hue_vs_sat"), hue_vs_hue=look.get("hue_vs_hue"))
-    skin = look.get("skin") or {}
-    di = ops.hsl_curves(di, hue_vs_sat=skin.get("hue_vs_sat"), hue_vs_hue=skin.get("hue_vs_hue"))
-    di = ops.hsl_curves(di, sat_vs_lum=look.get("sat_vs_lum"))
-    return ops.hsl_curves(di, sat_vs_sat=look.get("sat_vs_sat"))
+    """Steps 5 and 6 on DaVinci Intermediate values: every color control of the look, in node order (controls.py)."""
+    return controls.apply(di, look)
 
 
 def vignette_mask(height: int, width: int, start: float) -> np.ndarray:

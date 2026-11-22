@@ -53,8 +53,10 @@ def _run_node(x, node):
     s = {i["control"]: i["value"] for i in node["settings"]}
     if s.get("Node Color Space") == "HSV":
         return ops.hsv_saturation(x, _rgb(s["Gain"])[0] if "Gain" in s else 1.0, _rgb(s["Gamma"])[0] if "Gamma" in s else 0.0)
-    if node["label"] == "EXPOSURE":
+    if node["label"].endswith("EXPOSURE"):
         return W.di_encode(ops.lggo(W.di_decode(x), gain=_rgb(s["Gain"])))
+    if "Red output" in s:
+        return ops.rgb_mixer(x, [_rgb(s[f"{c} output"]) for c in ("Red", "Green", "Blue")])
     if "Contrast" in s:
         x = ops.contrast(x, float(s["Contrast"]), float(s["Pivot"]))
     if "Lift" in s or "Gamma" in s or "Gain" in s or "Offset" in s:
@@ -65,6 +67,8 @@ def _run_node(x, node):
     c = _curves(node)
     if "Custom" in c:
         x = ops.tone_curve(x, c["Custom"])
+    if any(k.startswith("Custom ") for k in c):
+        x = ops.channel_curves(x, c.get("Custom Red"), c.get("Custom Green"), c.get("Custom Blue"))
     if "Sat vs Lum" in c:
         x = ops.hsl_curves(x, sat_vs_lum=c["Sat vs Lum"])
     if "Lum vs Sat" in c:
@@ -76,9 +80,8 @@ def _run_node(x, node):
     return x
 
 
-def test_recipe_numbers_alone_rebuild_the_picture(proj, workdir):
-    """Type the recipe into Resolve's math, node by node: the result equals the app's own render."""
-    clip = build_graded(proj, workdir)
+def _rebuild_from_recipe(proj, clip):
+    """Type the recipe into Resolve's math, node by node, for every shot of the clip. Returns the recipe sections."""
     recipe = recipes.build(proj, "resolve")
     sections = {s["id"]: s for s in recipe["sections"]}
     timeline = sections["timeline"]["nodes"]
@@ -97,7 +100,7 @@ def test_recipe_numbers_alone_rebuild_the_picture(proj, workdir):
         for node in group["nodes"]:
             if node["label"].startswith("IN"):
                 continue
-            if "Linear" not in node["tool"] and linear:
+            if linear and ("Linear" not in node["tool"] or node["label"].endswith("EXPOSURE")):
                 x, linear = W.di_encode(x), False
             x = _run_node(x, node)
         if linear:
@@ -108,6 +111,59 @@ def test_recipe_numbers_alone_rebuild_the_picture(proj, workdir):
             x = _run_node(x, node)
         want = proj.render_frame(clip["id"], t, "graded", 320, shot["id"])
         assert np.max(np.abs(np.clip(odt(x), 0, 1) - np.clip(want, 0, 1))) < 2e-4
+    return sections, groups
+
+
+def test_recipe_numbers_alone_rebuild_the_picture(proj, workdir):
+    """Type the recipe into Resolve's math, node by node: the result equals the app's own render."""
+    _rebuild_from_recipe(proj, build_graded(proj, workdir))
+
+
+# Every new control whose Resolve math is known: the recipe carries it exactly.
+EXACT = dict(temp=0.3, tint=-0.1, offset=[24.6, 25.0, 25.5], shadows=0.4, highlights=-0.5, hue=3.0, color_boost=0.3,
+             rgb_mixer=[[1.05, -0.03, -0.02], [0.0, 1.0, 0.0], [-0.02, 0.03, 0.99]],
+             curves_rgb={"r": [[0.0, 0.0], [0.336, 0.346], [1.0, 1.0]], "g": [], "b": [[0.0, 0.01], [0.5, 0.49], [1.0, 1.0]]})
+TRIM = dict(exposure=0.2, temp=-0.15, tint=0.05, contrast=1.06, offset=[25.3, 25.0, 24.8], shadows=0.3, highlights=-0.2,
+            saturation=54.0, hue=2.0, rgb_mixer=[[1.0, 0.02, -0.02], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+
+def test_recipe_rebuilds_every_exact_control_and_each_shot_trim(proj, workdir, monkeypatch):
+    """Temp, tint, offset, shadows, highlights, hue, color boost, the RGB mixer and RGB curves on the look, plus one
+    shot's own trim: typed into Resolve's math from the recipe alone, the picture equals the app's render."""
+    monkeypatch.setitem(globals(), "LOOK", {**LOOK, **EXACT})
+    clip = build_graded(proj, workdir, name="rx_exact.mov")
+    shot = proj.shots_of(clip["id"])[0]
+    proj.set_shot_grade(shot["id"], {**proj.shot(shot["id"])["grade"], "trim": TRIM, "reasons": {"trim_contrast": "Flat shot."}})
+    sections, groups = _rebuild_from_recipe(proj, clip)
+    labels = [n["label"] for n in sections["timeline"]["nodes"]]
+    for want in ("EXPOSURE", "RGB MIXER", "TONE COLOR", "SHADOWS HIGHLIGHTS", "RGB CURVES", "COLOR BOOST", "PALETTE"):
+        assert want in labels
+    trim = [n for n in groups[0]["nodes"] if n["label"].startswith("TRIM ")]
+    assert [n["label"] for n in trim] == ["TRIM EXPOSURE", "TRIM RGB MIXER", "TRIM CONTRAST", "TRIM TONE COLOR",
+                                          "TRIM SHADOWS HIGHLIGHTS", "TRIM SATURATION", "TRIM PALETTE"]
+    contrast = next(n for n in trim if n["label"] == "TRIM CONTRAST")
+    assert contrast["settings"][0]["reason"] == "Flat shot." and contrast["title"].endswith("(this shot)")
+    assert not any(n["label"].startswith("TRIM") for n in groups[1]["nodes"])        # the other shot has no trim
+    assert proj.shot(shot["id"])["grade"]["trim"]["contrast"] == 1.06
+
+
+def test_recipe_marks_controls_set_by_eye(proj, workdir):
+    """HDR zones, Log wheels, Hue vs Lum and qualifier secondaries have no published Resolve math: the recipe lists them,
+    says they are set by eye, and the LUT carries the exact result."""
+    clip = build_graded(proj, workdir, name="rx_eye.mov")
+    look = dict(proj.state["look"])
+    look.update(hdr={**look["hdr"], "highlight": {"exposure": -0.4, "saturation": 0.9, "temp": 0.0, "tint": 0.0}},
+                log={**look["log"], "shadow": [0.0, 0.0, 0.01]}, hue_vs_lum=[[30.0, 1.0], [210.0, 0.9]],
+                secondaries=[{"name": "Sky", "hue": [215.0, 50.0, 20.0], "sat": [0.03, 1.0, 0.02], "adjust": {"saturation": 0.85}}])
+    proj.set_look(look)
+    r = recipes.build(proj, "resolve")
+    nodes = {n["label"]: n for n in next(s for s in r["sections"] if s["id"] == "timeline")["nodes"]}
+    for label in ("HDR ZONES", "LOG WHEELS", "HUE VS LUM", "SEC 1"):
+        assert label in nodes and any("by eye" in n for n in nodes[label]["notes"]), label
+    assert "Highlight zone" in {i["control"] for i in nodes["HDR ZONES"]["settings"]}
+    sec = {i["control"]: i["value"] for i in nodes["SEC 1"]["settings"]}
+    assert sec["Qualifier Hue"].startswith("Center 215 degrees") and sec["Sat"] == "44.0"   # 0.85 at 80% strength
+    assert proj.clip(clip["id"])
 
 
 def test_resolve_recipe_lists_settings_nodes_and_reasons(proj, workdir):
