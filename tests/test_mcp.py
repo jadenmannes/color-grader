@@ -140,6 +140,10 @@ def test_mcp_server_drives_every_control_secondaries_and_undo(proj, workdir, app
         look = proj.state["look"]
         assert look["temp"] == 0.25 and look["hdr"]["highlight"]["exposure"] == -0.4 and look["log"]["shadow"] == [0, 0, 0.01]
         assert look["curves_rgb"]["b"] == [[0.0, 0.01], [1.0, 1.0]] and look["reasons"]["temp"] == "Autumn"
+        step = [e for e in proj.activity() if e["tool"] == "adjust_look"][-1]          # the app's viewer shows this step
+        temp = next(c for c in step["controls"] if c["key"] == "temp")
+        assert temp["before"] == temp0 and temp["after"] == 0.25 and step["target"] == "look" and step["reason"] == "Autumn"
+        assert "temperature +0.25" in step["title"]
         assert not c.tool("adjust_shot", shot_id=shot["id"], trim={"exposure": 0.3, "highlights": -0.4})["isError"]
         assert proj.shot(shot["id"])["grade"]["trim"] == {"exposure": 0.3, "highlights": -0.4}
         bad = c.tool("adjust_shot", shot_id=shot["id"], trim={"brightness": 1})
@@ -153,6 +157,8 @@ def test_mcp_server_drives_every_control_secondaries_and_undo(proj, workdir, app
         assert info["key_coverage_percent"] > 0.5 and res["content"][1]["type"] == "image"
         sec = proj.state["look"]["secondaries"][0]
         assert sec["name"] == "Picked" and sec["adjust"]["saturation"] == 0.7 and sec["lum"]
+        picked = [e for e in proj.activity() if e["tool"] == "set_secondary"]
+        assert picked[0]["point"] == {"x": 0.3, "y": 0.4} and picked[-1]["key"]["index"] == 0
         key = c.tool("view_key", shot_id=shot["id"], index=1, mode="matte")
         assert not key["isError"] and key["content"][1]["type"] == "image" and "selected" in key["content"][0]["text"]
         assert c.tool("view_key", shot_id=shot["id"], index=2)["isError"]

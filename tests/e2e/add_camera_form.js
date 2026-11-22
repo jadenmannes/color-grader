@@ -10,7 +10,7 @@ const assert = (cond, msg) => { if (!cond) { console.error('FAIL: ' + msg); proc
   const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(url, { waitUntil: 'networkidle' });
+  await page.goto(url, { waitUntil: 'load' });
 
   // 1. load the clip: the camera is unknown, so the add-camera form opens, pre-filled from metadata
   await page.fill('input[placeholder="or paste a file path"]', clipPath);

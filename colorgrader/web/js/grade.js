@@ -169,7 +169,7 @@ function GradeTab({ ctx, shot, onLive }) {
   const fin = proj.finish;
   return html`
     <div class="pad">
-      <div class="row">
+      <div class="row" data-ctl="build">
         <button class="primary" onClick=${build}>${proj.graded ? 'Rebuild grade' : 'Build grade'}</button>
         <span class="dim">${proj.reference ? 'Balance, match, then the look of your reference.' : 'Balance and match. Add a reference or pick a look for the rest.'}</span>
       </div>
@@ -192,14 +192,14 @@ function GradeTab({ ctx, shot, onLive }) {
           onChange=${(e) => changePolish(parseInt(e.target.value, 10))} />
         <div class="dim">The finishing pass: deep blacks, bright top end, more midtone contrast. 0% leaves the tone exactly as the reference or look sets it. Release the slider to rebuild${proj.reference ? '' : ' the suggested looks'}.</div>
       </div>
-      <${LooksPanel} ctx=${ctx} onLive=${onLive} shot=${shot} />
+      <div data-ctl="looks"><${LooksPanel} ctx=${ctx} onLive=${onLive} shot=${shot} /></div>
       ${proj.graded && html`
-        <h3>Look strength: ${strength}%</h3>
+        <h3 data-ctl="strength">Look strength: ${strength}%</h3>
         <input type="range" min="0" max="100" value=${strength} onInput=${(e) => changeStrength(parseInt(e.target.value, 10))} />
         <h3>${proj.look.name && proj.look.name !== 'None' ? proj.look.name : 'Look'} at ${strength}%</h3>
         ${proj.look.description ? html`<p class="dim">${proj.look.description}</p>` : ''}
         <${LookTable} look=${look} />
-        <h3>Finish</h3>
+        <h3 data-ctl="finish">Finish</h3>
         <div class="row"><input type="checkbox" checked=${fin.vignette.enabled} onChange=${(e) => setFinish({ vignette: { enabled: e.target.checked } })} />
           <span style="width:70px">Vignette</span>
           <input type="range" min="0.05" max="0.8" step="0.05" value=${fin.vignette.amount} onChange=${(e) => setFinish({ vignette: { amount: parseFloat(e.target.value) } })} />
@@ -222,7 +222,7 @@ function GradeTab({ ctx, shot, onLive }) {
           <span class="mono" style="width:74px">${fin.grain.amount.toFixed(2)}%</span></div>
       `}
       ${proj.graded && shot && g && html`
-        <h3>Shot ${shot.index + 1}: white balance, exposure, black point, contrast</h3>
+        <h3 data-ctl="balance">Shot ${shot.index + 1}: white balance, exposure, black point, contrast</h3>
         <div class="row" style="margin-bottom:6px"><span>Scene</span>
           <input type="number" min="1" style="width:64px" value=${shot.scene} onChange=${async (e) => { await api.put(`/api/shots/${shot.id}/scene`, { scene: parseInt(e.target.value, 10) || 1 }); refresh(); }} />
           ${shot.is_lead ? html`<span class="badge">lead shot of its scene</span>` : ''}
@@ -240,8 +240,9 @@ function GradeTab({ ctx, shot, onLive }) {
     </div>`;
 }
 
-export function GradePanel({ ctx, tab, clip, shot, t, onLive, viewer, setViewer }) {
-  if (tab === 'color') return html`<${ColorPanel} ctx=${ctx} clip=${clip} shot=${shot} t=${t} onLive=${onLive} viewer=${viewer} setViewer=${setViewer} />`;
+export function GradePanel({ ctx, tab, clip, shot, t, onLive, viewer, setViewer, colorTarget, setColorTarget }) {
+  if (tab === 'color') return html`<${ColorPanel} ctx=${ctx} clip=${clip} shot=${shot} t=${t} onLive=${onLive} viewer=${viewer} setViewer=${setViewer}
+    target=${colorTarget} setTarget=${setColorTarget} />`;
   if (tab === 'recipe') return html`<${RecipePanel} ctx=${ctx} shot=${shot} />`;
   if (tab === 'export') return html`<${ExportPanel} ctx=${ctx} clip=${clip} shot=${shot} />`;
   return html`<${GradeTab} ctx=${ctx} shot=${shot} onLive=${onLive} />`;

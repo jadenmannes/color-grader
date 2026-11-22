@@ -122,12 +122,45 @@ def _text(obj: Any) -> dict[str, Any]:
 _history: list[dict[str, Any]] = []
 
 
-def _remember() -> None:
-    """Keep the grade as it is now, so undo can put it back."""
+def _remember() -> dict[str, Any]:
+    """Keep the grade as it is now, so undo can put it back. Returns the project as it was."""
     p = _state()
     _history.append({"look": p["look"], "finish": p["finish"], "strength": p["strength"],
                      "shots": {s["id"]: s["grade"] for s in p["shots"] if s.get("grade")}})
     del _history[:-30]
+    return p
+
+
+# ----------------------------------------------------------------- activity
+NAMES = {"exposure": "exposure", "temp": "temperature", "tint": "tint", "contrast": "contrast", "pivot": "pivot", "lift": "lift",
+         "gamma": "gamma", "gain": "gain", "offset": "offset", "saturation": "saturation", "hue": "hue", "color_boost": "color boost",
+         "shadows": "shadows", "highlights": "highlights", "hdr": "HDR zones", "rgb_mixer": "RGB mixer", "log": "log wheels",
+         "hsv_sat": "HSV saturation", "tone_curve": "custom curve", "curves_rgb": "RGB curves", "lum_vs_sat": "Lum vs Sat",
+         "hue_vs_hue": "Hue vs Hue", "hue_vs_sat": "Hue vs Sat", "hue_vs_lum": "Hue vs Lum", "sat_vs_sat": "Sat vs Sat",
+         "sat_vs_lum": "Sat vs Lum", "secondaries": "secondaries"}
+
+
+def _say(key: str, value: Any) -> str:
+    name = NAMES.get(key, key)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        signed = key in ("exposure", "temp", "tint", "shadows", "highlights", "hue", "color_boost")
+        return f"{name} {value:+g}" if signed else f"{name} {value:g}"
+    if isinstance(value, list) and len(value) == 3 and all(isinstance(v, (int, float)) for v in value):
+        return f"{name} " + " ".join(f"{v:g}" for v in value)
+    return name
+
+
+def _activity(**ev: Any) -> None:
+    """Tell the app what the assistant does, so the person watching sees it: a cursor moves to the control, drags it,
+    clicks where a color is sampled, and a feed lists each step. Never fails a tool."""
+    try:
+        _post("/api/activity", {k: v for k, v in ev.items() if v is not None})
+    except ToolError:
+        pass
+
+
+def _shot_name(s: dict[str, Any]) -> str:
+    return f"shot {s['index'] + 1}"
 
 
 def _rules_summary(p: dict[str, Any]) -> dict[str, Any]:
@@ -163,6 +196,7 @@ def view_shot(args: dict[str, Any]) -> list[dict[str, Any]]:
     width = int(args.get("width", 960))
     stage = args.get("stage", "both")
     _put("/api/focus", {"shot_id": s["id"], "t": t})        # the app's viewer jumps to this shot
+    _activity(tool="view_shot", title=f"Looking at {_shot_name(s)}", shot_id=s["id"], t=t, area="viewer")
     content = []
     if stage in ("both", "source"):
         content.append(_text(f"Source, shot {s['id']} at {t:.2f} s (camera signal as recorded):"))
@@ -178,6 +212,7 @@ def view_shot(args: dict[str, Any]) -> list[dict[str, Any]]:
 def read_shot(args: dict[str, Any]) -> list[dict[str, Any]]:
     p = _state()
     s = _shot(p, args["shot_id"])
+    _activity(tool="read_shot", title=f"Reading the scopes of {_shot_name(s)}", shot_id=s["id"], area="viewer")
     return [_text(_get("/api/readout", shot=s["id"], t=args.get("time"), stage=args.get("stage", "graded")))]
 
 
@@ -228,8 +263,10 @@ def adjust_look(args: dict[str, Any]) -> list[dict[str, Any]]:
     ch = _changes(args)
     if not ch:
         raise ToolError("Nothing to change. Pass at least one control (list_controls shows them all).")
-    _remember()
+    before = _remember()
     state = _patch("/api/grade/look", {"changes": ch, "reasons": {"*": args.get("reason") or "Set by the assistant."}})
+    _activity(tool="adjust_look", title="Look: " + ", ".join(_say(k, state["look"].get(k)) for k in ch), target="look",
+              reason=args.get("reason"), controls=[{"key": k, "before": before["look"].get(k), "after": state["look"].get(k)} for k in ch])
     return [_text({"changed": list(ch), "now": {k: state["look"].get(k) for k in ch}, "quality": _rules_summary(state),
                    "next": "view_shot shows the result. undo puts the previous grade back."})]
 
@@ -259,12 +296,22 @@ def adjust_shot(args: dict[str, Any]) -> list[dict[str, Any]]:
         if args.get("saturation") is not None:
             g["match"]["saturation"] = float(args["saturation"])
         state = _put(f"/api/shots/{s['id']}/grade", {"grade": g})
+        moves = [f"{lab} {float(args[k]):+g}" for k, lab in (("exposure_stops", "exposure"), ("warmth_stops", "warmth"),
+                                                           ("tint_stops", "tint"), ("black_offset", "black point"),
+                                                           ("contrast", "contrast"), ("saturation", "saturation")) if args.get(k) is not None]
+        _activity(tool="adjust_shot", title=f"{_shot_name(s).capitalize()} balance: " + ", ".join(moves), shot_id=s["id"],
+                  area="balance", reason=args.get("reason"))
         out["balance"] = g["balance"]
         out["match"] = {k: g["match"].get(k) for k in ("contrast", "pivot", "saturation")}
     if trim or args.get("reset_trim"):
         state = _patch(f"/api/shots/{s['id']}/trim", {"changes": trim, "replace": bool(args.get("reset_trim")),
                                                        "reasons": {"*": args.get("reason") or "Set by the assistant."}})
         out["trim"] = _shot(state, s["id"])["grade"].get("trim") or {}
+        old_trim = s["grade"].get("trim") or {}
+        keys = list(trim) or list(old_trim)
+        _activity(tool="adjust_shot", title=f"{_shot_name(s).capitalize()} only: " + (", ".join(_say(k, out["trim"].get(k)) for k in trim) or "trim reset"),
+                  target="shot", shot_id=s["id"], reason=args.get("reason"),
+                  controls=[{"key": k, "before": old_trim.get(k), "after": out["trim"].get(k)} for k in keys])
     out["quality"] = _rules_summary(state)
     return [_text(out)]
 
@@ -319,6 +366,8 @@ def set_secondary(args: dict[str, Any]) -> list[dict[str, Any]]:
         gone = secs.pop(idx - 1)
         _remember()
         state = save(secs)
+        _activity(tool="set_secondary", title=f"Removing secondary {idx} ({gone.get('name')})", target="shot" if owner else "look",
+                  shot_id=owner, controls=[{"key": "secondaries"}])
         return [_text({"removed": gone.get("name"), "left": [x.get("name") for x in _owner_secs(state, owner)],
                        "quality": _rules_summary(state)})]
     if idx is None:
@@ -332,6 +381,8 @@ def set_secondary(args: dict[str, Any]) -> list[dict[str, Any]]:
         t = float(pick["time"]) if pick.get("time") is not None else _mid(ps)
         picked = _get("/api/sample", clip=ps["clip_id"], t=round(t, 3), x=pick["x"], y=pick["y"], shot=ps["id"],
                       target="shot" if owner else "look")
+        _activity(tool="set_secondary", title=f"Picking {picked.get('color', 'this color')} for {sec.get('name')}", shot_id=ps["id"],
+                  t=t, point={"x": float(pick["x"]), "y": float(pick["y"])})
         for q, v in picked["suggested_qualifier"].items():
             if args.get(q) is None:
                 sec[q] = v
@@ -355,6 +406,11 @@ def set_secondary(args: dict[str, Any]) -> list[dict[str, Any]]:
     state = save(secs)
     saved = _owner_secs(state, owner)[idx - 1]
     view = _view_shot_id(state, (pick or {}).get("shot_id"), owner)
+    moves = [f"{k} {v:+g}" if k != "saturation" else f"saturation x{v:g}" for k, v in (saved.get("adjust") or {}).items()
+             if abs(v - (1.0 if k == "saturation" else 0.0)) > 1e-9]
+    _activity(tool="set_secondary", title=f"Secondary {idx} ({saved.get('name')})" + (": " + ", ".join(moves) if moves else ""),
+              target="shot" if owner else "look", shot_id=view, reason=args.get("reason"), controls=[{"key": "secondaries"}],
+              key={"target": "shot" if owner else "look", "index": idx - 1, "name": saved.get("name")})
     img, cover = _key_image(state, view, owner, idx)
     out = {"secondary": idx, "on": where, "saved": saved, "key_coverage_percent": cover,
            "next": "The image shows what the key selects (color) and what it leaves (gray). Narrow or widen hue, sat and lum "
@@ -375,6 +431,8 @@ def view_key(args: dict[str, Any]) -> list[dict[str, Any]]:
     t = float(args["time"]) if args.get("time") is not None else _mid(s)
     img, cover = _key_image(p, s["id"], owner, idx, args.get("mode", "highlight"), t, int(args.get("width", 640)))
     _put("/api/focus", {"shot_id": s["id"], "t": t})
+    _activity(tool="view_key", title=f"Checking what {secs[idx - 1].get('name')} selects: {cover:.1f}% of the frame", shot_id=s["id"], t=t,
+              key={"target": "shot" if owner else "look", "index": idx - 1, "name": secs[idx - 1].get("name")})
     mode = args.get("mode", "highlight")
     say = ("Highlight mode: the selected parts in color, the rest flat gray." if mode == "highlight"
            else "Matte: white is selected, black is left alone.")
@@ -385,8 +443,11 @@ def sample_color(args: dict[str, Any]) -> list[dict[str, Any]]:
     p = _state()
     s = _shot(p, args["shot_id"])
     t = float(args["time"]) if args.get("time") is not None else _mid(s)
-    return [_text(_get("/api/sample", clip=s["clip_id"], t=round(t, 3), x=args["x"], y=args["y"], shot=s["id"],
-                       target="shot" if args.get("of") == "shot" else "look"))]
+    res = _get("/api/sample", clip=s["clip_id"], t=round(t, 3), x=args["x"], y=args["y"], shot=s["id"],
+               target="shot" if args.get("of") == "shot" else "look")
+    _activity(tool="sample_color", title=f"Sampling the color here: {res.get('color', '')}", shot_id=s["id"], t=t,
+              point={"x": float(args["x"]), "y": float(args["y"])})
+    return [_text(res)]
 
 
 def reset_controls(args: dict[str, Any]) -> list[dict[str, Any]]:
@@ -398,12 +459,21 @@ def reset_controls(args: dict[str, Any]) -> list[dict[str, Any]]:
     owner = args.get("shot_id")
     if owner:
         _shot(_state(), owner)
-    _remember()
+    before = _remember()
     if owner:
         body = {"changes": {k: neutral[k] for k in keys}} if keys else {"changes": {}, "replace": True}
         state = _patch(f"/api/shots/{owner}/trim", body)
     else:
         state = _patch("/api/grade/look", {"changes": {k: neutral[k] for k in (keys or neutral)}, "reasons": {"*": "Reset to neutral."}})
+    if owner:
+        old, new = _shot(before, owner)["grade"].get("trim") or {}, _shot(state, owner)["grade"].get("trim") or {}
+        ks = keys or list(old)
+    else:
+        old, new = before["look"], state["look"]
+        ks = keys or [k for k in neutral if json.dumps(old.get(k)) != json.dumps(new.get(k))]
+    _activity(tool="reset_controls", title="Reset to neutral: " + (", ".join(NAMES.get(k, k) for k in ks) or "nothing changed"),
+              target="shot" if owner else "look", shot_id=owner,
+              controls=[{"key": k, "before": old.get(k), "after": new.get(k, neutral.get(k))} for k in ks])
     return [_text({"reset": keys or "all controls", "on": f"shot {owner}" if owner else "the look", "quality": _rules_summary(state)})]
 
 
@@ -423,16 +493,19 @@ def set_finish(args: dict[str, Any]) -> list[dict[str, Any]]:
         raise ToolError("Nothing to change.")
     _remember()
     state = _put("/api/grade/finish", {"finish": fin})
+    _activity(tool="set_finish", title="Finish: " + ", ".join(f"{k.replace('_', ' ')} {args[k]}" for k in changed), area="finish")
     return [_text({"changed": changed, "finish": state["finish"], "quality": _rules_summary(state)})]
 
 
 def set_strength(args: dict[str, Any]) -> list[dict[str, Any]]:
     _remember()
     state = _put("/api/grade/strength", {"strength": float(args["percent"])})
+    _activity(tool="set_strength", title=f"Look strength {float(args['percent']):g}%", area="strength")
     return [_text({"strength_percent": state["strength"], "quality": _rules_summary(state)})]
 
 
 def design_looks(args: dict[str, Any]) -> list[dict[str, Any]]:
+    _activity(tool="design_looks", title="Designing three looks from the shot", shot_id=args.get("shot_id"), area="looks")
     _wait(_post("/api/suggestions", {"shot_id": args.get("shot_id")})["job"])
     p = _state()
     content = [_text({"scene_read": (p.get("scene_read") or {}).get("lines"),
@@ -446,6 +519,7 @@ def design_looks(args: dict[str, Any]) -> list[dict[str, Any]]:
 
 def apply_look(args: dict[str, Any]) -> list[dict[str, Any]]:
     _remember()
+    _activity(tool="apply_look", title="Applying a designed look", area="looks")
     job = _wait(_post(f"/api/suggestions/{args['look_id']}/apply")["job"])
     p = _state()
     return [_text({"applied": p["look"].get("name"), "result": job.get("result"), "quality": _rules_summary(p)})]
@@ -453,6 +527,7 @@ def apply_look(args: dict[str, Any]) -> list[dict[str, Any]]:
 
 def rebuild_grade(args: dict[str, Any]) -> list[dict[str, Any]]:
     _remember()
+    _activity(tool="rebuild_grade", title="Rebuilding the grade", area="build")
     _wait(_post("/api/grade/build", {})["job"])
     p = _state()
     return [_text({"look": p["look"].get("name"), "notes": (p.get("report") or {}).get("notes"),
@@ -463,6 +538,7 @@ def undo(args: dict[str, Any]) -> list[dict[str, Any]]:
     if not _history:
         raise ToolError("Nothing to undo in this session.")
     h = _history.pop()
+    _activity(tool="undo", title="Undo: the grade goes back one step")
     _put("/api/grade/look", {"look": h["look"]})
     _put("/api/grade/finish", {"finish": h["finish"]})
     for sid, grade in h["shots"].items():
@@ -472,12 +548,14 @@ def undo(args: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def save_look(args: dict[str, Any]) -> list[dict[str, Any]]:
+    _activity(tool="save_look", title=f"Saving the look as {args['name']}")
     return [_text(_post("/api/looks", {"name": args["name"]}))]
 
 
 def export_video(args: dict[str, Any]) -> list[dict[str, Any]]:
     p = _state()
     ids = args.get("clip_ids") or [c["id"] for c in p["clips"] if not c["info"]["is_image"]]
+    _activity(tool="export_video", title=f"Exporting {len(ids)} graded clip{'s' if len(ids) != 1 else ''}")
     job = _wait(_post("/api/export/video", {"clip_ids": ids, "format": args.get("format") or "auto"})["job"])
     return [_text(job.get("result"))]
 

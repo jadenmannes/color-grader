@@ -186,6 +186,8 @@ Tools the assistant gets:
 - Secondaries: `sample_color` reads the color under a point, `set_secondary` keys a color (from a point or from ranges) and corrects inside it, `view_key` shows what the key selects.
 - Looks and output: `design_looks`, `apply_look`, `rebuild_grade`, `undo`, `save_look`, `export_video`.
 
+You see the assistant at work in the app. An orange cursor moves to each control it changes, drags sliders and wheels from the old value to the new one, clicks where it samples a color, and switches to the shot it works on. The viewer shows the key of a secondary while the assistant checks it. A short feed on the viewer lists each step with its reason. The cursor only shows the steps: the MCP server makes the changes. Untick Show assistant under the viewer to keep the panels still.
+
 The app and the MCP server talk only on 127.0.0.1 and send nothing anywhere by themselves. With an assistant connected, the frames it views (single JPEG stills, 960 pixels wide by default) and the numbers go to the assistant's AI service, like an image you share in a chat. Your video files stay on your computer. The MCP server has to run on the same computer as the app, so a cloud session (Claude Code on the web) cannot reach it.
 
 ## Camera library
@@ -244,7 +246,7 @@ uv run pytest
 - `tests/test_suggest.py` covers the look suggestions: three different looks, each inside the quality rules, chosen by the footage.
 - `tests/test_controls.py` checks every color control: neutral changes nothing, each control moves only what it should, strength and rounding hold, and the API takes partial edits and rejects bad input.
 - `tests/test_mcp.py` drives the MCP server over stdin and stdout against a running app: every control, shot trims, secondaries with a picked color, the key view and undo.
-- `tests/e2e/run.sh` drives the real add-camera form and the Color tab in a headless browser.
+- `tests/e2e/run.sh` drives the real add-camera form, the Color tab and the assistant cursor in a headless browser.
 
 ## Layout
 

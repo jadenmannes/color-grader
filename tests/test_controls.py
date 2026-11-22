@@ -209,3 +209,16 @@ def test_rebuild_keeps_hand_set_controls_and_trims(proj, workdir):
     assert look["reasons"]["temp"] == "Warmer autumn light."
     assert proj.shot(shot["id"])["grade"]["trim"] == {"exposure": 0.4}
     assert any("stay on top of the fitted look" in n for n in report["notes"])
+
+
+
+def test_activity_log_keeps_the_assistants_steps(client):
+    first = client.get("/api/stamp").json()["activity"]
+    ev = client.post("/api/activity", json={"tool": "adjust_look", "title": "Look: temperature +0.2", "target": "look",
+                                             "controls": [{"key": "temp", "before": 0, "after": 0.2}, {"bad": 1}],
+                                             "point": "not a point", "unknown": "dropped"}).json()
+    assert ev["n"] == first + 1 and ev["controls"] == [{"key": "temp", "before": 0, "after": 0.2}]
+    assert "point" not in ev and "unknown" not in ev
+    got = client.get("/api/activity", params={"since": first}).json()
+    assert got["n"] == ev["n"] and [e["title"] for e in got["events"]] == ["Look: temperature +0.2"]
+    assert client.get("/api/stamp").json()["activity"] == ev["n"]

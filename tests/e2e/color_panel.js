@@ -11,8 +11,8 @@ const assert = (cond, msg) => { if (!cond) { console.error('FAIL: ' + msg); proc
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const state = async () => (await (await page.request.get(url + 'api/state')).json()).project;
-  const settle = async (ms = 900) => { await page.waitForTimeout(ms); await page.waitForLoadState('networkidle'); };
-  await page.goto(url, { waitUntil: 'networkidle' });
+  const settle = async (ms = 1100) => { await page.waitForTimeout(ms); };
+  await page.goto(url, { waitUntil: 'load' });
   await page.waitForSelector('.shot');
   await page.click('.shot >> nth=0');
   await page.click('.col.right button.tab:has-text("Color")');

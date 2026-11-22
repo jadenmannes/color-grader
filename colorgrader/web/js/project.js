@@ -1,6 +1,7 @@
 import { html, useState, useEffect, useRef, useMemo } from '/static/vendor/htm-preact-standalone.js';
 import { api, qs, fmtTime } from './api.js';
 import { GradePanel, ReferenceCard, stageChoices } from './grade.js';
+import { createPlayer, AssistantFeed } from './assistant.js';
 
 const STAGE_NAMES = { source: 'Source', converted: 'Converted', balanced: 'Balanced', graded: 'Graded' };
 const SCOPE_KINDS = [['waveform', 'Waveform'], ['parade', 'RGB parade'], ['vectorscope', 'Vectorscope'], ['histogram', 'Histogram']];
@@ -73,7 +74,7 @@ function ClipRow({ ctx, clip, shots, sel, onSelect, onAnalyze }) {
         </div></div>`}
       ${shots.length === 0 && clip.camera_id && clip.confirmed && html`<button class="small" onClick=${() => onAnalyze([clip.id])}>Analyze</button>`}
       ${shots.map((s) => html`
-        <div class=${'shot' + (sel === s.id ? ' sel' : '')} onClick=${() => onSelect(s)}>
+        <div class=${'shot' + (sel === s.id ? ' sel' : '')} data-shot=${s.id} onClick=${() => onSelect(s)}>
           <img src=${`/api/thumb?shot=${s.id}&v=${s.signature || ''}`} loading="lazy" />
           <div class="shot-info">
             <div>Shot ${s.index + 1}${s.has_faces ? ' · faces' : ''}</div>
@@ -84,7 +85,7 @@ function ClipRow({ ctx, clip, shots, sel, onSelect, onAnalyze }) {
     </div>`;
 }
 
-function Viewer({ clip, shot, t, before, after, version, reference, play, mode }) {
+function Viewer({ clip, shot, t, before, after, version, reference, play, mode, feed }) {
   const [split, setSplit] = useState(0.5);
   const box = useRef(null);
   const drag = useRef(false);
@@ -113,6 +114,7 @@ function Viewer({ clip, shot, t, before, after, version, reference, play, mode }
           <div class="tag l">${mode.label}</div>
         </div></div>
         ${refBox}
+        <${AssistantFeed} items=${feed} />
       </div>`;
   }
   const picking = mode && mode.kind === 'pick';
@@ -129,6 +131,7 @@ function Viewer({ clip, shot, t, before, after, version, reference, play, mode }
           <div class="tag l">Graded playback, preview quality</div>
         </div></div>
         ${refBox}
+        <${AssistantFeed} items=${feed} />
       </div>`;
   }
   return html`
@@ -143,6 +146,7 @@ function Viewer({ clip, shot, t, before, after, version, reference, play, mode }
         </div>
       </div>
       ${refBox}
+      <${AssistantFeed} items=${feed} />
     </div>`;
 }
 
@@ -205,17 +209,36 @@ export function ProjectPage({ ctx }) {
   const [pathText, setPathText] = useState('');
   const [liveVersion, setLiveVersion] = useState(0);
   const [viewerMode, setViewerMode] = useState(null);   // color picking or a secondary's key, from the Color tab
+  const [colorTarget, setColorTarget] = useState('look'); // the Color tab edits the look or this shot's trim
+  const [feed, setFeed] = useState([]);                   // the assistant's last steps, shown on the viewer
+  const [watch, setWatch] = useState(() => { try { return localStorage.getItem('cg-watch') !== 'off'; } catch (e) { return true; } });
+  const watchRef = useRef(watch); watchRef.current = watch;
+  const keyByAssistant = useRef(false);
   const tDeb = useDebounced(t, 120);
-  useEffect(() => { if (rightTab !== 'color') setViewerMode(null); }, [rightTab]);
+  useEffect(() => { if (rightTab !== 'color') { setViewerMode(null); keyByAssistant.current = false; } }, [rightTab]);
 
   const shot = proj.shots.find((s) => s.id === sel) || proj.shots[0] || null;
   const clip = shot ? proj.clips.find((c) => c.id === shot.clip_id) : (proj.clips[0] || null);
   useEffect(() => { if (shot && (t < shot.start || t > shot.end)) setT(shot.times && shot.times.length ? shot.times[Math.floor(shot.times.length / 2)] : (shot.start + shot.end) / 2); }, [shot && shot.id]);
   useEffect(() => { if (!stages.includes(after)) setAfter(stages[stages.length - 1]); }, [stages.join(',')]);
-  // Live: an outside tool (the MCP server) may change the grade or move to another shot. Follow it.
+  // Live: an outside tool (the MCP server) may change the grade or move to another shot. Follow it, and show each
+  // step it reports with the assistant cursor.
   const lastFocus = useRef(-1);
+  const lastActivity = useRef(-1);
   const stampRef = useRef(proj.stamp || 0);
   stampRef.current = proj.stamp || 0;
+  const uiRef = useRef(null);
+  uiRef.current = {
+    select: (id, time) => { setSel(id); if (time != null) setT(time); },
+    openColor: (target) => { setRightTab('color'); setColorTarget(target === 'shot' ? 'shot' : 'look'); },
+    openGrade: () => setRightTab('grade'),
+    showKey: (k) => { keyByAssistant.current = true; setRightTab('color'); setViewerMode({ kind: 'key', target: k.target, index: k.index, label: `Key: ${k.name || 'secondary'}. Selected parts in color, the rest gray.` }); },
+    clearKey: () => { if (keyByAssistant.current) { keyByAssistant.current = false; setViewerMode(null); } },
+    feed: (ev) => setFeed((f) => [...f.slice(-2), { ...ev, seen: Date.now() }]),
+    refresh: async () => { await refresh(); setLiveVersion((v) => v + 1); },
+  };
+  const player = useRef(null);
+  if (!player.current) player.current = createPlayer(() => uiRef.current);
   useEffect(() => {
     let live = true;
     const tick = async () => {
@@ -225,12 +248,18 @@ export function ProjectPage({ ctx }) {
         if (lastFocus.current < 0) lastFocus.current = st.focus.n;
         if (st.focus.n !== lastFocus.current) {
           lastFocus.current = st.focus.n;
-          if (st.focus.shot_id) { setSel(st.focus.shot_id); if (st.focus.t != null) setT(st.focus.t); setRightTab('grade'); }
+          if (st.focus.shot_id) { setSel(st.focus.shot_id); if (st.focus.t != null) setT(st.focus.t); if (!watchRef.current) setRightTab('grade'); }
         }
-        if (st.stamp !== stampRef.current && st.jobs === 0) { await refresh(); setLiveVersion((v) => v + 1); }
+        if (lastActivity.current < 0) lastActivity.current = st.activity || 0;
+        if ((st.activity || 0) !== lastActivity.current) {
+          const res = await api.get('/api/activity?since=' + lastActivity.current);
+          lastActivity.current = res.n;
+          if (watchRef.current && res.events.length) player.current.push(res.events);
+        }
+        if (st.stamp !== stampRef.current && st.jobs === 0 && !player.current.busy()) { await refresh(); setLiveVersion((v) => v + 1); }
       } catch (e) { /* the app may be restarting */ }
     };
-    const id = setInterval(tick, 1500);
+    const id = setInterval(tick, 600);
     return () => { live = false; clearInterval(id); };
   }, []);
   useEffect(() => { if (proj.graded) setAfter('graded'); }, [proj.graded]);
@@ -302,7 +331,7 @@ export function ProjectPage({ ctx }) {
         <${ReferenceCard} ctx=${ctx} />
       </div>
       <div class="col center">
-        <${Viewer} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} version=${version} reference=${proj.reference} play=${play} mode=${viewerMode} />
+        <${Viewer} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} version=${version} reference=${proj.reference} play=${play} mode=${viewerMode} feed=${watch ? feed : []} />
         ${clip && html`<div class="transport">
           ${!clip.info.is_image && proj.graded ? (play
             ? html`<button class="small" onClick=${() => setPlay(null)}>Back to frames</button>`
@@ -310,6 +339,8 @@ export function ProjectPage({ ctx }) {
           <span class="mono">${fmtTime(t)}</span>
           <input type="range" min=${shot ? shot.start : 0} max=${shot ? Math.max(shot.start, shot.end - 0.04) : clip.info.duration} step="0.04" value=${t}
             onInput=${(e) => setT(parseFloat(e.target.value))} />
+          <label class="row" style="margin:0;gap:4px;white-space:nowrap" title="Show what an AI assistant does through the MCP server: a cursor on each control it changes">
+            <input type="checkbox" checked=${watch} onChange=${(e) => { setWatch(e.target.checked); try { localStorage.setItem('cg-watch', e.target.checked ? 'on' : 'off'); } catch (err) { /* private window */ } }} />Show assistant</label>
           <label style="margin:0">Left</label>
           <select value=${before} onChange=${(e) => setBefore(e.target.value)}>${['source', ...stages].map((s) => html`<option value=${s}>${STAGE_NAMES[s]}</option>`)}</select>
           <label style="margin:0">Right</label>
@@ -325,7 +356,7 @@ export function ProjectPage({ ctx }) {
         <div class="scroll">
           ${rightTab === 'analysis' ? html`<${AnalysisPanel} ctx=${ctx} clip=${clip} shot=${shot} />`
             : html`<${GradePanel} ctx=${ctx} tab=${rightTab} clip=${clip} shot=${shot} t=${tDeb} onLive=${() => setLiveVersion((v) => v + 1)}
-                viewer=${viewerMode} setViewer=${setViewerMode} />`}
+                viewer=${viewerMode} setViewer=${setViewerMode} colorTarget=${colorTarget} setColorTarget=${setColorTarget} />`}
         </div>
       </div>
     </div>`;

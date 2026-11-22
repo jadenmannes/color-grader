@@ -83,7 +83,7 @@ p { margin: 0 0 8px; line-height: 1.45; }
 .confirm { background: #2a2414; border: 1px solid #5b4a1c; border-radius: 5px; padding: 8px; margin: 6px 0; font-size: 12px; }
 
 /* viewer */
-.viewer-wrap { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 10px; background: #0c0c0c; }
+.viewer-wrap { position: relative; flex: 1; min-height: 0; display: flex; gap: 8px; padding: 10px; background: #0c0c0c; }
 .viewer { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .viewer .stage { position: relative; max-width: 100%; max-height: 100%; line-height: 0; user-select: none; }
 .viewer img { max-width: 100%; max-height: 100%; display: block; }
@@ -212,3 +212,22 @@ input.ctl-num { padding: 2px 4px; font-size: 11.5px; text-align: right; }
 .sec-card { padding: 8px; }
 .sec-card .ctl { grid-template-columns: 70px 1fr 58px 16px; }
 .qual label { color: var(--text); font-size: 12px; }
+
+/* The assistant cursor: what an AI assistant does through the MCP server */
+.ghost-cursor { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; opacity: 0;
+  transition-property: left, top, opacity; transition-timing-function: cubic-bezier(.25,.8,.25,1), cubic-bezier(.25,.8,.25,1), ease;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.85)); }
+.ghost-cursor.on { opacity: 1; }
+.ghost-cursor svg { display: block; margin: -2px 0 0 -3px; transition: transform .12s; transform-origin: 3px 2px; }
+.ghost-cursor.down svg { transform: scale(.82); }
+.ghost-label { position: absolute; left: 18px; top: 22px; background: rgba(18,18,18,.94); border: 1px solid var(--accent); color: var(--text);
+  border-radius: 5px; padding: 4px 8px; font-size: 12px; line-height: 1.35; white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+.ghost-label small { display: block; color: var(--dim); white-space: normal; }
+.ghost-cursor.flip .ghost-label { left: auto; right: 6px; }
+.ghost-ripple { position: fixed; z-index: 59; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; border: 2px solid var(--accent);
+  pointer-events: none; animation: ghost-ripple .6s ease-out forwards; }
+@keyframes ghost-ripple { from { transform: scale(.25); opacity: 1; } to { transform: scale(1.5); opacity: 0; } }
+.ghost-hit { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.ghost-feed { position: absolute; left: 14px; bottom: 12px; max-width: 46%; display: flex; flex-direction: column; gap: 4px; pointer-events: none; z-index: 5; }
+.ghost-feed div { background: rgba(14,14,14,.84); border-left: 2px solid var(--accent); padding: 4px 8px; border-radius: 0 4px 4px 0; font-size: 12px; line-height: 1.35; }
+.ghost-feed small { color: var(--dim); display: block; }

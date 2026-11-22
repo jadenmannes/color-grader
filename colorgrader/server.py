@@ -331,7 +331,19 @@ def scope(clip: str, kind: str = "waveform", t: float = 0.0, stage: str = "conve
 def stamp() -> dict[str, Any]:
     """Cheap poll for the viewer: it refreshes when an outside tool changed the grade, and follows its focus."""
     p = project.get()
-    return {"stamp": int(p.state.get("stamp", 0)), "focus": p.focus(), "jobs": len(jobs.active())}
+    return {"stamp": int(p.state.get("stamp", 0)), "focus": p.focus(), "jobs": len(jobs.active()), "activity": p.activity_n()}
+
+
+@app.post("/api/activity")
+def post_activity(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """A step the assistant takes, for the viewer to show: a cursor on the control it changes and a line in the feed."""
+    return project.get().log_activity(body)
+
+
+@app.get("/api/activity")
+def get_activity(since: int = 0) -> dict[str, Any]:
+    p = project.get()
+    return {"events": p.activity(since), "n": p.activity_n()}
 
 
 @app.put("/api/focus")

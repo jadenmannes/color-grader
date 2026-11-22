@@ -226,11 +226,11 @@ function Curves({ values, set }) {
 }
 
 // ------------------------------------------------------------------ inputs
-function Slider({ label, value, min, max, step, neutral, onSet, help, unit }) {
+function Slider({ label, value, min, max, step, neutral, onSet, help, unit, ctl }) {
   const d = digitsOf(step);
   const v = typeof value === 'number' ? value : neutral;
   const changed = Math.abs(v - neutral) > 1e-9;
-  return html`<div class="ctl" title=${help || ''}>
+  return html`<div class="ctl" data-ctl=${ctl} title=${help || ''}>
     <span class=${'ctl-label' + (changed ? ' on' : '')} title="Double-click to reset" onDblClick=${() => onSet(neutral, true)}>${label}</span>
     <input type="range" min=${min} max=${max} step=${step} value=${v}
       onInput=${(e) => onSet(parseFloat(e.target.value), false)} onChange=${(e) => onSet(parseFloat(e.target.value), true)} />
@@ -240,7 +240,7 @@ function Slider({ label, value, min, max, step, neutral, onSet, help, unit }) {
   </div>`;
 }
 
-function Wheel({ title, value, neutral, radius, level, step, onSet }) {
+function Wheel({ title, value, neutral, radius, level, step, onSet, ctl }) {
   // The ball moves color (the channels' difference), the ring below moves level (their mean), like Resolve's wheels.
   const pad = useRef(null);
   const grab = useRef(null);
@@ -268,9 +268,9 @@ function Wheel({ title, value, neutral, radius, level, step, onSet }) {
   const up = () => { if (grab.current) { grab.current = null; onSet(value, true); } };
   const changed = !near(value, neutral);
   const stops = [0, 300, 240, 180, 120, 60, 0].map((h, i) => `hsl(${h} 55% 42%) ${i * 60}deg`).join(', ');
-  return html`<div class="wheel">
+  return html`<div class="wheel" data-ctl=${ctl}>
     <div class=${'wheel-title' + (changed ? ' on' : '')} title="Double-click the wheel to reset its color" >${title}</div>
-    <div class="wheel-pad" ref=${pad} style=${{ background: `radial-gradient(circle, #2a2a2a 0 22%, rgba(42,42,42,.55) 46%, rgba(42,42,42,0) 72%), conic-gradient(from 90deg, ${stops})` }}
+    <div class="wheel-pad" ref=${pad} data-radius=${radius} data-neutral=${JSON.stringify(neutral)} style=${{ background: `radial-gradient(circle, #2a2a2a 0 22%, rgba(42,42,42,.55) 46%, rgba(42,42,42,0) 72%), conic-gradient(from 90deg, ${stops})` }}
       onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up} onDblClick=${() => onSet(build(0, 0, L), true)}>
       <div class="wheel-dot" style=${{ left: `${50 + bx * 46}%`, top: `${50 - by * 46}%` }}></div>
     </div>
@@ -468,7 +468,7 @@ function Controls({ ctx, spec, target, shot, clip, t, onLive, viewer, setViewer 
   const num = (key, extra = {}) => {
     const s = S(key);
     return html`<${Slider} label=${s.label} value=${values[key]} min=${s.min} max=${s.max} step=${s.step} neutral=${s.neutral}
-      help=${s.help} unit=${{ stops: 'st', degrees: '°', points: 'pt' }[s.unit] || ''} onSet=${(v, c) => set(key, v, c)} ...${extra} />`;
+      help=${s.help} unit=${{ stops: 'st', degrees: '°', points: 'pt' }[s.unit] || ''} ctl=${key} onSet=${(v, c) => set(key, v, c)} ...${extra} />`;
   };
   const changed = (...keys) => keys.some((k) => !near(values[k], neutral[k]));
   const resetAll = () => { Object.keys(neutral).forEach((k) => { if (!near(values[k], neutral[k])) set(k, clone(neutral[k]), true); }); };
@@ -489,10 +489,10 @@ function Controls({ ctx, spec, target, shot, clip, t, onLive, viewer, setViewer 
     <${Group} title="Primaries: lift, gamma, gain, offset" open=${true} changed=${changed('lift', 'gamma', 'gain', 'offset', 'contrast', 'pivot')}
       note="Drag the ball for color (Shift for fine moves), the slider under it for level. Numbers are R, G, B.">
       <div class="wheels">
-        <${Wheel} title="Lift" value=${values.lift} neutral=${neutral.lift} radius=${0.06} level=${[-0.1, 0.1]} step=${0.001} onSet=${(v, c) => set('lift', v, c)} />
-        <${Wheel} title="Gamma" value=${values.gamma} neutral=${neutral.gamma} radius=${0.06} level=${[-0.1, 0.1]} step=${0.001} onSet=${(v, c) => set('gamma', v, c)} />
-        <${Wheel} title="Gain" value=${values.gain} neutral=${neutral.gain} radius=${0.2} level=${[-0.5, 0.8]} step=${0.001} onSet=${(v, c) => set('gain', v, c)} />
-        <${Wheel} title="Offset" value=${values.offset} neutral=${neutral.offset} radius=${4} level=${[-8, 8]} step=${0.05} onSet=${(v, c) => set('offset', v, c)} />
+        <${Wheel} title="Lift" ctl="lift" value=${values.lift} neutral=${neutral.lift} radius=${0.06} level=${[-0.1, 0.1]} step=${0.001} onSet=${(v, c) => set('lift', v, c)} />
+        <${Wheel} title="Gamma" ctl="gamma" value=${values.gamma} neutral=${neutral.gamma} radius=${0.06} level=${[-0.1, 0.1]} step=${0.001} onSet=${(v, c) => set('gamma', v, c)} />
+        <${Wheel} title="Gain" ctl="gain" value=${values.gain} neutral=${neutral.gain} radius=${0.2} level=${[-0.5, 0.8]} step=${0.001} onSet=${(v, c) => set('gain', v, c)} />
+        <${Wheel} title="Offset" ctl="offset" value=${values.offset} neutral=${neutral.offset} radius=${4} level=${[-8, 8]} step=${0.05} onSet=${(v, c) => set('offset', v, c)} />
       </div>
       ${num('contrast')}${num('pivot')}
     <//>
@@ -500,10 +500,10 @@ function Controls({ ctx, spec, target, shot, clip, t, onLive, viewer, setViewer 
       ${num('saturation')}${num('color_boost')}${num('hue')}${num('shadows')}${num('highlights')}
     <//>
     <${Group} title="HDR zones" changed=${changed('hdr')} note=${S('hdr').help}>
-      <${Zones} value=${values.hdr} spec=${S('hdr')} onSet=${(v, c) => set('hdr', v, c)} />
+      <div data-ctl="hdr"><${Zones} value=${values.hdr} spec=${S('hdr')} onSet=${(v, c) => set('hdr', v, c)} /></div>
     <//>
     <${Group} title="Log wheels" changed=${changed('log')} note="Offset inside one range of brightness. Low Range and High Range set the borders.">
-      <div class="wheels three">
+      <div class="wheels three" data-ctl="log">
         ${['shadow', 'midtone', 'highlight'].map((w) => html`<${Wheel} title=${w[0].toUpperCase() + w.slice(1)} value=${lg[w]} neutral=${[0, 0, 0]}
           radius=${0.03} level=${[-0.05, 0.05]} step=${0.001} onSet=${(v, c) => setLog(w, v, c)} />`)}
       </div>
@@ -511,28 +511,35 @@ function Controls({ ctx, spec, target, shot, clip, t, onLive, viewer, setViewer 
       <${Slider} label="High Range" value=${lg.high_range} min=${0.3} max=${0.9} step=${0.005} neutral=${0.55} onSet=${(v, c) => setLog('high_range', v, c)} />
     <//>
     <${Group} title="Curves" changed=${changed('tone_curve', 'curves_rgb', 'hue_vs_hue', 'hue_vs_sat', 'hue_vs_lum', 'lum_vs_sat', 'sat_vs_sat', 'sat_vs_lum')}>
-      <${Curves} values=${values} set=${set} />
+      <div data-ctl="curves"><${Curves} values=${values} set=${set} /></div>
     <//>
     <${Group} title="RGB mixer" changed=${changed('rgb_mixer')} note=${S('rgb_mixer').help}>
-      <${Mixer} value=${values.rgb_mixer} onSet=${(v, c) => set('rgb_mixer', v, c)} />
+      <div data-ctl="rgb_mixer"><${Mixer} value=${values.rgb_mixer} onSet=${(v, c) => set('rgb_mixer', v, c)} /></div>
       ${changed('rgb_mixer') ? html`<button class="small ghost" style="margin-top:4px" onClick=${() => set('rgb_mixer', clone(neutral.rgb_mixer), true)}>Reset</button>` : ''}
     <//>
     <${Group} title="Film-style saturation (HSV)" changed=${changed('hsv_sat')} note=${S('hsv_sat').help}>
-      <${Slider} label="Gain" value=${hs.gain} min=${0.5} max=${1.6} step=${0.005} neutral=${1} onSet=${(v, c) => set('hsv_sat', { ...hs, gain: v }, c)} />
+      <${Slider} label="Gain" ctl="hsv_sat" value=${hs.gain} min=${0.5} max=${1.6} step=${0.005} neutral=${1} onSet=${(v, c) => set('hsv_sat', { ...hs, gain: v }, c)} />
       <${Slider} label="Gamma" value=${hs.gamma} min=${-0.2} max=${0.2} step=${0.002} neutral=${0} onSet=${(v, c) => set('hsv_sat', { ...hs, gamma: v }, c)} />
     <//>
     <${Group} title="Secondaries (qualifiers)" open=${(values.secondaries || []).length > 0} changed=${changed('secondaries')}
       note="Key one color or area, such as the sky, skin or foliage, and correct only there.">
-      <${Secondaries} list=${values.secondaries} set=${set} ctx=${ctx} clip=${clip} shot=${shot} t=${t} target=${target} viewer=${viewer} setViewer=${setViewer} />
+      <div data-ctl="secondaries"><${Secondaries} list=${values.secondaries} set=${set} ctx=${ctx} clip=${clip} shot=${shot} t=${t} target=${target} viewer=${viewer} setViewer=${setViewer} /></div>
     <//>
   </div>`;
 }
 
-export function ColorPanel({ ctx, clip, shot, t, onLive, viewer, setViewer }) {
+export function ColorPanel({ ctx, clip, shot, t, onLive, viewer, setViewer, target: outerTarget, setTarget: setOuterTarget }) {
   const spec = useSpec(ctx.notify);
-  const [target, setTarget] = useState('look');
+  const [ownTarget, setOwnTarget] = useState('look');
+  const target = outerTarget || ownTarget;
+  const setTarget = setOuterTarget || setOwnTarget;
   const proj = ctx.state.project;
-  useEffect(() => { setViewer(null); }, [target, shot && shot.id]);
+  const lastSpot = useRef(null);   // a new target or shot ends picking and key views; opening the tab does not
+  useEffect(() => {
+    const spot = `${target}:${shot ? shot.id : ''}`;
+    if (lastSpot.current !== null && lastSpot.current !== spot) setViewer(null);
+    lastSpot.current = spot;
+  }, [target, shot && shot.id]);
   if (!proj.shots.length) return html`<div class="pad dim">Add and analyze clips first.</div>`;
   if (!spec) return html`<div class="pad dim">Loading controls…</div>`;
   return html`<div class="pad colors">

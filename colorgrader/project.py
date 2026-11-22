@@ -695,6 +695,39 @@ class Project:
     def focus(self) -> dict[str, Any]:
         return dict(getattr(self, "_focus", None) or {"shot_id": None, "t": None, "n": 0})
 
+    # ------------------------------------------------------ assistant activity
+    ACTIVITY_KEYS = ("tool", "title", "reason", "shot_id", "t", "target", "controls", "point", "key", "area")
+
+    def log_activity(self, ev: dict[str, Any]) -> dict[str, Any]:
+        """One step an outside assistant (the MCP server) takes. The viewer shows it: a cursor on the control, a line in
+        the feed. Kept in memory only, the last 60 steps."""
+        e: dict[str, Any] = {k: ev[k] for k in self.ACTIVITY_KEYS if ev.get(k) is not None}
+        for k, n in (("tool", 40), ("title", 200), ("reason", 300), ("shot_id", 80), ("target", 10), ("area", 20)):
+            if k in e:
+                e[k] = str(e[k])[:n]
+        if not isinstance(e.get("controls"), list):
+            e.pop("controls", None)
+        else:
+            e["controls"] = [c for c in e["controls"][:30] if isinstance(c, dict) and isinstance(c.get("key"), str)]
+        for k in ("point", "key"):
+            if k in e and not isinstance(e[k], dict):
+                e.pop(k)
+        with self.lock:
+            n = int(getattr(self, "_activity_n", 0)) + 1
+            self._activity_n = n
+            e.update(n=n, time=round(time.time(), 3))
+            log = getattr(self, "_activity", [])
+            log.append(e)
+            self._activity = log[-60:]
+        return e
+
+    def activity(self, since: int = 0) -> list[dict[str, Any]]:
+        with self.lock:
+            return [dict(e) for e in getattr(self, "_activity", []) if e["n"] > since]
+
+    def activity_n(self) -> int:
+        return int(getattr(self, "_activity_n", 0))
+
     def set_scene(self, shot_id: str, scene: int) -> None:
         with self.lock:
             s = self.shot(shot_id)
