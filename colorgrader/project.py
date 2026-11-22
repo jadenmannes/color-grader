@@ -553,6 +553,99 @@ class Project:
             s["grade"] = model.quantize_shot(g)
         self.touch()
 
+    def adjust_controls(self, changes: dict[str, Any], shot_id: str | None = None, reasons: dict[str, Any] | None = None,
+                        replace: bool = False) -> dict[str, Any]:
+        """Change some color controls of the shared look (shot_id None) or of one shot's own trim. The rest stay.
+
+        reasons: {control: why} or {"*": why for all}. replace=True starts the shot's trim from neutral.
+        Returns the controls of that target that now differ from neutral. Raises ValueError on bad input.
+        """
+        ch = controls_mod.clean(changes)
+        why = {str(k): str(v) for k, v in (reasons or {}).items() if v}
+        say = lambda k: why.get(k, why.get("*", "Set by hand."))
+        with self.lock:
+            if shot_id is None:
+                look = controls_mod.merge(copy.deepcopy(self.state["look"]), ch)
+                look["reasons"] = {**(look.get("reasons") or {}), **{k: say(k) for k in ch}}
+                if look.get("source") in (None, "", "none"):
+                    look["source"], look["name"] = "edited", "Custom"
+                self.set_look(look)
+                return controls_mod.changed(self.state["look"])
+            s = self.shot(shot_id)
+            g = copy.deepcopy(s["grade"])
+            g["trim"] = controls_mod.changed(controls_mod.merge({} if replace else (g.get("trim") or {}), ch))
+            g["reasons"] = {**(g.get("reasons") or {}), **{f"trim_{k}": say(k) for k in ch}}
+            self.set_shot_grade(shot_id, g)
+            return controls_mod.changed(self.shot(shot_id)["grade"]["trim"])
+
+    def qualifier_view(self, clip_id: str, t: float, width: int, shot_id: str | None = None, target: str = "look",
+                       index: int | None = None) -> tuple[np.ndarray, dict[str, Any], str | None]:
+        """The picture a secondary keys on (DaVinci Intermediate), its control set, and the shot.
+
+        target "look": a secondary of the shared look. target "shot": one of the shot's own trim.
+        index None: a new secondary at the end of the list.
+        """
+        clip = self.clip(clip_id)
+        if shot_id is None:
+            s = self.shot_at(clip_id, t)
+            shot_id = s["id"] if s else None
+        if target == "shot" and not shot_id:
+            raise ProjectError("A shot trim needs a shot.")
+        buf, w, h = self.frame_signal(clip, t, int(width))
+        idt, prof = self.idt(clip)
+        sig = media.raw_to_rgb(buf, w, h, clip["info"], full_range=idt.full_range)
+        lin = pipeline.camera_stage(sig, idt, prof.get("corrections"))
+        cam_sat = pipeline.camera_saturation(prof.get("corrections"))
+        shot = model.quantize_shot(self.shot(shot_id)["grade"]) if shot_id else model.neutral_shot()
+        if target == "shot":
+            c = shot.get("trim") or {}
+            di = pipeline.shot_stage(lin, {**shot, "trim": {}}, cam_sat)
+        else:
+            c = model.at_strength(self.state["look"], self.state["strength"] / 100.0)
+            di = pipeline.shot_stage(lin, shot, cam_sat)
+        return controls_mod.qualifier_input(di, c, index), c, shot_id
+
+    def key_frame(self, clip_id: str, t: float, width: int, shot_id: str | None = None, target: str = "look",
+                  index: int = 0, mode: str = "highlight") -> tuple[np.ndarray, float]:
+        """What secondary `index` selects, as Resolve's Highlight mode (keyed picture in color, the rest gray) or as
+        a black and white matte. Returns display R'G'B' and the share of the frame inside the key in percent."""
+        di, c, _ = self.qualifier_view(clip_id, t, width, shot_id, target, index)
+        secs = c.get("secondaries") or []
+        if not 0 <= index < len(secs):
+            where = "this shot's trim" if target == "shot" else "the look"
+            raise ProjectError(f"No secondary {index + 1} on {where}: it has {len(secs)}.")
+        k = controls_mod.secondary_key(di, secs[index])
+        if mode == "matte":
+            out = np.repeat(k[..., None], 3, axis=-1)
+        else:
+            disp = np.clip(self.odt()(di), 0.0, 1.0)
+            out = disp * k[..., None] + np.float32(0.5) * (1.0 - k[..., None])
+        return out.astype(np.float32), round(float(k.mean()) * 100.0, 1)
+
+    def sample(self, clip_id: str, t: float, x: float, y: float, shot_id: str | None = None, target: str = "look",
+               radius: float = 0.01) -> dict[str, Any]:
+        """The color under one point of the frame (x, y from 0 to 1, left top origin): what a qualifier would key on
+        there, the graded display value, and a starting qualifier around it."""
+        from .recipes.base import hue_label
+
+        x, y = min(max(float(x), 0.0), 1.0), min(max(float(y), 0.0), 1.0)
+        di, _, shot_id = self.qualifier_view(clip_id, t, 640, shot_id, target, None)
+
+        def patch(img: np.ndarray) -> np.ndarray:
+            h, w = img.shape[:2]
+            cx, cy, r = int(round(x * (w - 1))), int(round(y * (h - 1))), max(1, int(round(radius * w)))
+            return img[max(0, cy - r):cy + r + 1, max(0, cx - r):cx + r + 1].reshape(-1, 3).mean(axis=0)
+
+        col = controls_mod.describe_color(patch(di))
+        shown = patch(np.clip(self.render_frame(clip_id, t, "graded", 640, shot_id), 0.0, 1.0)) if shot_id else None
+        out = {"x": round(x, 4), "y": round(y, 4), "time": round(float(t), 3), "shot_id": shot_id, "target": target,
+               "qualifier_sees": col, "color": hue_label(col["hue"]) if col["chroma"] >= 0.012 else "near gray",
+               "suggested_qualifier": controls_mod.suggest_qualifier(col["hue"], col["chroma"], col["lum"])}
+        if shown is not None:
+            out["graded_rgb_percent"] = [round(float(v) * 100.0, 1) for v in shown]
+            out["graded_luma_percent"] = round(float(shown @ np.array([0.2126, 0.7152, 0.0722])) * 100.0, 1)
+        return out
+
     def readout(self, shot_id: str, t: float | None = None, stage: str = "graded") -> dict[str, Any]:
         """The numbers a colorist reads off the scopes for one shot: levels, clipping, color, skin. Display percent."""
         from .color.ycbcr import rgb_to_ycbcr

@@ -130,3 +130,56 @@ def test_a_shot_trim_runs_after_the_match_and_survives_rounding():
     plain = pipeline.shot_stage(lin, model.neutral_shot())
     trimmed = pipeline.shot_stage(lin, q)
     assert trimmed.mean() > plain.mean() + 0.03
+
+
+# ---------------------------------------------------------------- the API
+def test_api_edits_controls_partially_and_checks_input(proj, client, workdir):
+    from colorgrader.grade import auto
+
+    from helpers import flog2_clip, load_clip
+
+    clip = load_clip(proj, flog2_clip(workdir / "api_controls.mov", frames_each=12, size=(320, 180)))
+    auto.build(proj, refit=False)
+    shot = proj.shots_of(clip["id"])[0]
+    spec = client.get("/api/controls").json()
+    keys = {c["key"] for c in spec["controls"]}
+    assert {"temp", "tint", "hdr", "rgb_mixer", "offset", "log", "shadows", "highlights", "curves_rgb", "hue", "color_boost",
+            "hue_vs_lum", "secondaries"} <= keys <= set(spec["neutral"])
+
+    r = client.patch("/api/grade/look", json={"changes": {"temp": 0.3, "hdr": {"highlight": {"exposure": -0.5}}, "lift": 2.0},
+                                               "reasons": {"temp": "Autumn warmth."}, "recheck": False})
+    assert r.status_code == 200
+    look = proj.state["look"]
+    assert look["temp"] == 0.3 and look["lift"] == [0.2, 0.2, 0.2]                   # clamped to the wheel's range
+    assert look["hdr"]["highlight"]["exposure"] == -0.5 and look["hdr"]["shadow"]["exposure"] == 0.0
+    assert look["reasons"]["temp"] == "Autumn warmth."
+    r = client.patch("/api/grade/look", json={"changes": {"hdr": {"light": {"saturation": 1.1}}}, "recheck": False})
+    assert proj.state["look"]["hdr"]["highlight"]["exposure"] == -0.5                 # earlier zone edits stay
+    bad = client.patch("/api/grade/look", json={"changes": {"brightness": 1}})
+    assert bad.status_code == 400 and "Unknown control" in bad.json()["detail"]
+    bad = client.patch("/api/grade/look", json={"changes": {"tone_curve": [[0, 0, 1]]}})
+    assert bad.status_code == 400 and "[input, output]" in bad.json()["detail"]
+
+    t = 0.5 * (shot["start"] + shot["end"])
+    before = proj.render_frame(clip["id"], t, "graded", 160, shot["id"])
+    r = client.patch(f"/api/shots/{shot['id']}/trim", json={"changes": {"exposure": 0.5, "contrast": 1.0}, "recheck": False})
+    assert r.status_code == 200 and r.json()["trim"] == {"exposure": 0.5}            # neutral values are not stored
+    assert proj.render_frame(clip["id"], t, "graded", 160, shot["id"]).mean() > before.mean() + 0.02
+    got = client.get("/api/grade/controls", params={"shot": shot["id"]}).json()
+    assert got["trim"] == {"exposure": 0.5} and got["look"]["temp"] == 0.3
+
+    # pick a color, key it, and the key covers the picked point
+    s = client.get("/api/sample", params={"clip": clip["id"], "t": t, "x": 0.3, "y": 0.4, "shot": shot["id"], "target": "shot"}).json()
+    assert {"hue", "chroma", "lum"} <= set(s["qualifier_sees"]) and len(s["graded_rgb_percent"]) == 3
+    sec = {"name": "Picked", **s["suggested_qualifier"], "adjust": {"saturation": 0.6}}
+    r = client.patch(f"/api/shots/{shot['id']}/trim", json={"changes": {"secondaries": [sec]}, "recheck": False})
+    assert r.json()["trim"]["secondaries"][0]["name"] == "Picked"
+    k = client.get("/api/key", params={"clip": clip["id"], "t": t, "shot": shot["id"], "target": "shot", "index": 0, "mode": "matte", "w": 320})
+    assert k.status_code == 200 and k.content[:2] == b"\xff\xd8" and float(k.headers["X-Key-Coverage"]) > 0.5
+    import cv2
+    matte = cv2.imdecode(np.frombuffer(k.content, np.uint8), cv2.IMREAD_GRAYSCALE)
+    h, w = matte.shape
+    assert matte[int(0.4 * (h - 1)), int(0.3 * (w - 1))] > 200                       # the picked point is inside the key
+    assert client.get("/api/key", params={"clip": clip["id"], "t": t, "target": "look", "index": 0}).status_code == 400
+    r = client.patch(f"/api/shots/{shot['id']}/trim", json={"changes": {}, "replace": True, "recheck": False})
+    assert r.json()["trim"] == {} and proj.shot(shot["id"])["grade"]["trim"] == {}

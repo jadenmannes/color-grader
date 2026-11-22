@@ -41,6 +41,12 @@ class ToolError(Exception):
 
 # --------------------------------------------------------------------- http
 def _request(method: str, path: str, body: Any = None, params: dict[str, Any] | None = None, raw: bool = False, timeout: float = 120.0):
+    payload, _ = _request_full(method, path, body, params, timeout)
+    return payload if raw else json.loads(payload.decode() or "null")
+
+
+def _request_full(method: str, path: str, body: Any = None, params: dict[str, Any] | None = None, timeout: float = 120.0):
+    """The response body as bytes and its headers."""
     url = BASE + path
     if params:
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
@@ -48,7 +54,7 @@ def _request(method: str, path: str, body: Any = None, params: dict[str, Any] | 
     req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json"} if data else {})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:
-            payload = res.read()
+            return res.read(), dict(res.headers)
     except urllib.error.HTTPError as exc:
         try:
             detail = json.loads(exc.read().decode()).get("detail")
@@ -57,7 +63,6 @@ def _request(method: str, path: str, body: Any = None, params: dict[str, Any] | 
         raise ToolError(f"The app refused: {detail}")
     except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
         raise ToolError(f"Color Grader is not running at {BASE} ({exc}). Start it with start.bat or start.sh, then try again.")
-    return payload if raw else json.loads(payload.decode() or "null")
 
 
 def _get(path, **params):
@@ -66,6 +71,10 @@ def _get(path, **params):
 
 def _put(path, body):
     return _request("PUT", path, body)
+
+
+def _patch(path, body):
+    return _request("PATCH", path, body)
 
 
 def _post(path, body=None):
@@ -172,75 +181,230 @@ def read_shot(args: dict[str, Any]) -> list[dict[str, Any]]:
     return [_text(_get("/api/readout", shot=s["id"], t=args.get("time"), stage=args.get("stage", "graded")))]
 
 
+UNITS = ("Look and trim controls: exposure, temp, tint, shadows, highlights and HDR zone exposure in stops. Contrast 1, saturation 50, "
+         "offset 25, gain 1, lift and gamma 0, hue 0, color_boost 0 = unchanged. Curves: [input, output] points; DaVinci Intermediate "
+         "inputs (black 0, middle gray 0.336), hue inputs in degrees (red 0, yellow 60, green 120, cyan 180, blue 240, magenta 300), "
+         "chroma inputs (skin about 0.03 to 0.06). Shot balance: gain per channel on linear light, offset 25 = unchanged. "
+         "The look is stored at full strength; strength_percent scales it toward neutral on screen.")
+
+
 def get_grade(args: dict[str, Any]) -> list[dict[str, Any]]:
+    out = _get("/api/grade/controls", shot=args.get("shot_id"))
     p = _state()
-    look = {k: p["look"].get(k) for k in ("name", "exposure", "contrast", "pivot", "lift", "gamma", "gain", "saturation", "hsv_sat",
-                                          "tone_curve", "lum_vs_sat", "hue_vs_hue", "hue_vs_sat", "sat_vs_sat")}
-    out = {"look": look, "strength_percent": p["strength"], "finish": p["finish"]}
+    out["finish"] = p["finish"]
     if args.get("shot_id"):
         s = _shot(p, args["shot_id"])
-        out["shot"] = {"id": s["id"], "balance": s["grade"]["balance"], "match": {k: s["grade"]["match"].get(k) for k in ("contrast", "pivot", "saturation")},
+        out["shot"] = {"id": s["id"], "balance": s["grade"]["balance"],
+                       "match": {k: s["grade"]["match"].get(k) for k in ("contrast", "pivot", "saturation")},
                        "reasons": s["grade"].get("reasons", {})}
-    out["units"] = ("Look: exposure in stops on a linear node. Contrast around pivot 0.336 (middle gray). Lift and Gamma are offsets, "
-                    "Gain a multiplier, per channel R G B (Resolve wheels). Saturation 50 = unchanged. hsv_sat gain 1 and gamma 0 = unchanged. "
-                    "hue_vs_hue: [hue degrees, rotation degrees], red 0, yellow 60, green 120, cyan 180, blue 240, magenta 300. "
-                    "Shot balance: gain per channel on linear light, offset 25 = unchanged.")
+    out["note"] = "look and trim list only the controls that differ from neutral. list_controls shows every control."
+    out["units"] = UNITS
     return [_text(out)]
 
 
-LOOK_KEYS = {"exposure", "contrast", "pivot", "lift", "gamma", "gain", "saturation", "tone_curve", "hue_vs_hue", "hue_vs_sat", "lum_vs_sat", "sat_vs_sat"}
+def list_controls(args: dict[str, Any]) -> list[dict[str, Any]]:
+    spec = _get("/api/controls")
+    keep = ("key", "label", "group", "type", "neutral", "min", "max", "unit", "help", "resolve", "exact")
+    return [_text({"controls": [{k: c.get(k) for k in keep if c.get(k) is not None} for c in spec["controls"]],
+                   "finish": [{k: c.get(k) for k in ("key", "label", "min", "max", "unit", "help") if c.get(k) is not None} for c in spec["finish"]],
+                   "how": "adjust_look changes the shared look on every shot. adjust_shot with trim changes one shot only. set_secondary "
+                          "adds a qualifier correction (sky, skin, foliage). exact false: the Resolve recipe sets that control by eye.",
+                   "units": UNITS})]
+
+
+def _changes(args: dict[str, Any], strict: bool = False) -> dict[str, Any]:
+    if strict:
+        unknown = [k for k in args if k not in CONTROL_PROPS]
+        if unknown:
+            raise ToolError(f"Unknown control {', '.join(unknown)}. Controls: {', '.join(CONTROL_PROPS)}.")
+    ch = {k: v for k, v in args.items() if k in CONTROL_PROPS and k not in ("hsv_gain", "hsv_gamma") and v is not None}
+    hs = {f: float(args[f"hsv_{f}"]) for f in ("gain", "gamma") if args.get(f"hsv_{f}") is not None}
+    if hs:
+        ch["hsv_sat"] = hs
+    return ch
 
 
 def adjust_look(args: dict[str, Any]) -> list[dict[str, Any]]:
-    p = _state()
-    look = copy.deepcopy(p["look"])
-    changed = []
-    for k, v in args.items():
-        if k in LOOK_KEYS and v is not None:
-            if k in ("lift", "gamma", "gain") and (not isinstance(v, list) or len(v) != 3):
-                raise ToolError(f"{k} takes three numbers: R, G, B.")
-            look[k] = v
-            changed.append(k)
-    if args.get("hsv_gain") is not None or args.get("hsv_gamma") is not None:
-        hs = dict(look.get("hsv_sat") or {"gain": 1.0, "gamma": 0.0})
-        if args.get("hsv_gain") is not None:
-            hs["gain"] = float(args["hsv_gain"])
-        if args.get("hsv_gamma") is not None:
-            hs["gamma"] = float(args["hsv_gamma"])
-        look["hsv_sat"] = hs
-        changed.append("hsv_sat")
-    if not changed:
-        raise ToolError("Nothing to change. Pass at least one look control.")
+    ch = _changes(args)
+    if not ch:
+        raise ToolError("Nothing to change. Pass at least one control (list_controls shows them all).")
     _remember()
-    look["source"] = look.get("source") or "edited"
-    look.setdefault("reasons", {})
-    for k in changed:
-        look["reasons"][k] = args.get("reason") or "Set by the assistant."
-    state = _put("/api/grade/look", {"look": look})
-    return [_text({"changed": changed, "quality": _rules_summary(state),
+    state = _patch("/api/grade/look", {"changes": ch, "reasons": {"*": args.get("reason") or "Set by the assistant."}})
+    return [_text({"changed": list(ch), "now": {k: state["look"].get(k) for k in ch}, "quality": _rules_summary(state),
                    "next": "view_shot shows the result. undo puts the previous grade back."})]
 
 
 def adjust_shot(args: dict[str, Any]) -> list[dict[str, Any]]:
     p = _state()
     s = _shot(p, args["shot_id"])
-    g = copy.deepcopy(s["grade"])
-    gain = [float(v) for v in g["balance"]["gain"]]
-    ex = float(args.get("exposure_stops") or 0.0)
-    warm = float(args.get("warmth_stops") or 0.0)
-    tint = float(args.get("tint_stops") or 0.0)
-    f = [2.0 ** (ex + warm / 2), 2.0 ** (ex - tint), 2.0 ** (ex - warm / 2)]   # +tint is magenta: less green
-    g["balance"]["gain"] = [round(a * b, 4) for a, b in zip(gain, f)]
-    if args.get("black_offset") is not None:
-        g["balance"]["offset"] = [round(v + float(args["black_offset"]), 2) for v in g["balance"]["offset"]]
-    if args.get("contrast") is not None:
-        g["match"]["contrast"] = float(args["contrast"])
-    if args.get("saturation") is not None:
-        g["match"]["saturation"] = float(args["saturation"])
+    balance = [k for k in ("exposure_stops", "warmth_stops", "tint_stops", "black_offset", "contrast", "saturation") if args.get(k) is not None]
+    trim = _changes(args.get("trim") or {}, strict=True)
+    if not balance and not trim and not args.get("reset_trim"):
+        raise ToolError("Nothing to change. Pass balance values or trim controls.")
     _remember()
-    state = _put(f"/api/shots/{s['id']}/grade", {"grade": g})
-    return [_text({"shot": s["id"], "balance": g["balance"], "match": {k: g["match"].get(k) for k in ("contrast", "pivot", "saturation")},
-                   "quality": _rules_summary(state)})]
+    out: dict[str, Any] = {"shot": s["id"]}
+    state = None
+    if balance:
+        g = copy.deepcopy(s["grade"])
+        gain = [float(v) for v in g["balance"]["gain"]]
+        ex = float(args.get("exposure_stops") or 0.0)
+        warm = float(args.get("warmth_stops") or 0.0)
+        tint = float(args.get("tint_stops") or 0.0)
+        f = [2.0 ** (ex + warm / 2), 2.0 ** (ex - tint), 2.0 ** (ex - warm / 2)]   # +tint is magenta: less green
+        g["balance"]["gain"] = [round(a * b, 4) for a, b in zip(gain, f)]
+        if args.get("black_offset") is not None:
+            g["balance"]["offset"] = [round(v + float(args["black_offset"]), 2) for v in g["balance"]["offset"]]
+        if args.get("contrast") is not None:
+            g["match"]["contrast"] = float(args["contrast"])
+        if args.get("saturation") is not None:
+            g["match"]["saturation"] = float(args["saturation"])
+        state = _put(f"/api/shots/{s['id']}/grade", {"grade": g})
+        out["balance"] = g["balance"]
+        out["match"] = {k: g["match"].get(k) for k in ("contrast", "pivot", "saturation")}
+    if trim or args.get("reset_trim"):
+        state = _patch(f"/api/shots/{s['id']}/trim", {"changes": trim, "replace": bool(args.get("reset_trim")),
+                                                       "reasons": {"*": args.get("reason") or "Set by the assistant."}})
+        out["trim"] = _shot(state, s["id"])["grade"].get("trim") or {}
+    out["quality"] = _rules_summary(state)
+    return [_text(out)]
+
+
+def _owner_secs(p: dict[str, Any], shot_id: str | None) -> list[dict[str, Any]]:
+    if shot_id:
+        return copy.deepcopy((_shot(p, shot_id)["grade"].get("trim") or {}).get("secondaries") or [])
+    return copy.deepcopy(p["look"].get("secondaries") or [])
+
+
+def _view_shot_id(p: dict[str, Any], *candidates: str | None) -> str:
+    for c in candidates:
+        if c:
+            return c
+    focus = (p.get("focus") or {}).get("shot_id") if isinstance(p.get("focus"), dict) else None
+    if focus:
+        return focus
+    if not p["shots"]:
+        raise ToolError("No shots yet. Load footage in the app first.")
+    return p["shots"][0]["id"]
+
+
+def _key_image(p: dict[str, Any], shot_id: str, owner: str | None, index: int, mode: str = "highlight",
+               t: float | None = None, width: int = 640) -> tuple[dict[str, Any], float]:
+    s = _shot(p, shot_id)
+    t = _mid(s) if t is None else float(t)
+    jpg, headers = _request_full("GET", "/api/key", params={"clip": s["clip_id"], "t": round(t, 3), "w": width, "shot": s["id"],
+                                                            "target": "shot" if owner else "look", "index": index - 1, "mode": mode})
+    cover = float({k.lower(): v for k, v in headers.items()}.get("x-key-coverage", "0"))
+    return {"type": "image", "data": base64.b64encode(jpg).decode(), "mimeType": "image/jpeg"}, cover
+
+
+SEC_ADJUST = {"exposure": "exposure", "temp": "temp", "tint": "tint", "saturation": "saturation", "hue_rotate": "hue"}
+
+
+def set_secondary(args: dict[str, Any]) -> list[dict[str, Any]]:
+    p = _state()
+    owner = args.get("shot_id")          # None: a secondary of the shared look
+    secs = _owner_secs(p, owner)
+    where = f"shot {owner}" if owner else "the look"
+    idx = args.get("index")
+    if idx is not None:
+        idx = int(idx)
+        if not 1 <= idx <= len(secs):
+            raise ToolError(f"No secondary {idx} on {where}: it has {len(secs)}.")
+    body_reason = {"*": args.get("reason") or "Set by the assistant."}
+    save = (lambda ss: _patch(f"/api/shots/{owner}/trim", {"changes": {"secondaries": ss}, "reasons": body_reason})) if owner \
+        else (lambda ss: _patch("/api/grade/look", {"changes": {"secondaries": ss}, "reasons": body_reason}))
+    if args.get("remove"):
+        if idx is None:
+            raise ToolError("remove needs the index of the secondary.")
+        gone = secs.pop(idx - 1)
+        _remember()
+        state = save(secs)
+        return [_text({"removed": gone.get("name"), "left": [x.get("name") for x in _owner_secs(state, owner)],
+                       "quality": _rules_summary(state)})]
+    if idx is None:
+        secs.append({"name": args.get("name") or f"Secondary {len(secs) + 1}", "enabled": True, "invert": False, "adjust": {}})
+        idx = len(secs)
+    sec = secs[idx - 1]
+    picked = None
+    pick = args.get("pick")
+    if pick:
+        ps = _shot(p, _view_shot_id(p, pick.get("shot_id"), owner))
+        t = float(pick["time"]) if pick.get("time") is not None else _mid(ps)
+        picked = _get("/api/sample", clip=ps["clip_id"], t=round(t, 3), x=pick["x"], y=pick["y"], shot=ps["id"],
+                      target="shot" if owner else "look")
+        for q, v in picked["suggested_qualifier"].items():
+            if args.get(q) is None:
+                sec[q] = v
+        if args.get("hue") is None and "hue" not in picked["suggested_qualifier"]:
+            sec.pop("hue", None)
+    for q in ("hue", "sat", "lum"):
+        if q in args:
+            if args[q]:
+                sec[q] = args[q]
+            else:
+                sec.pop(q, None)       # [] or null: that part of the key is off
+    for k in ("name", "invert", "enabled"):
+        if args.get(k) is not None:
+            sec[k] = args[k]
+    adj = dict(sec.get("adjust") or {})
+    for a, k in SEC_ADJUST.items():
+        if args.get(a) is not None:
+            adj[k] = float(args[a])
+    sec["adjust"] = adj
+    _remember()
+    state = save(secs)
+    saved = _owner_secs(state, owner)[idx - 1]
+    view = _view_shot_id(state, (pick or {}).get("shot_id"), owner)
+    img, cover = _key_image(state, view, owner, idx)
+    out = {"secondary": idx, "on": where, "saved": saved, "key_coverage_percent": cover,
+           "next": "The image shows what the key selects (color) and what it leaves (gray). Narrow or widen hue, sat and lum "
+                   "until only the wanted area shows, then view_shot to judge the correction.", "quality": _rules_summary(state)}
+    if picked:
+        out["picked"] = {k: picked[k] for k in ("color", "qualifier_sees", "graded_luma_percent") if k in picked}
+    return [_text(out), img]
+
+
+def view_key(args: dict[str, Any]) -> list[dict[str, Any]]:
+    p = _state()
+    owner = args["shot_id"] if args.get("of") == "shot" else None
+    secs = _owner_secs(p, owner)
+    idx = int(args.get("index", 1))
+    if not 1 <= idx <= len(secs):
+        raise ToolError(f"No secondary {idx} on {'this shot' if owner else 'the look'}: it has {len(secs)}.")
+    s = _shot(p, args["shot_id"])
+    t = float(args["time"]) if args.get("time") is not None else _mid(s)
+    img, cover = _key_image(p, s["id"], owner, idx, args.get("mode", "highlight"), t, int(args.get("width", 640)))
+    _put("/api/focus", {"shot_id": s["id"], "t": t})
+    mode = args.get("mode", "highlight")
+    say = ("Highlight mode: the selected parts in color, the rest flat gray." if mode == "highlight"
+           else "Matte: white is selected, black is left alone.")
+    return [_text(f"Secondary {idx} ({secs[idx - 1].get('name')}) on shot {s['id']} at {t:.2f} s: {cover:.1f}% of the frame selected. {say}"), img]
+
+
+def sample_color(args: dict[str, Any]) -> list[dict[str, Any]]:
+    p = _state()
+    s = _shot(p, args["shot_id"])
+    t = float(args["time"]) if args.get("time") is not None else _mid(s)
+    return [_text(_get("/api/sample", clip=s["clip_id"], t=round(t, 3), x=args["x"], y=args["y"], shot=s["id"],
+                       target="shot" if args.get("of") == "shot" else "look"))]
+
+
+def reset_controls(args: dict[str, Any]) -> list[dict[str, Any]]:
+    neutral = _get("/api/controls")["neutral"]
+    keys = args.get("controls") or []
+    unknown = [k for k in keys if k not in neutral]
+    if unknown:
+        raise ToolError(f"Unknown control {', '.join(unknown)}.")
+    owner = args.get("shot_id")
+    if owner:
+        _shot(_state(), owner)
+    _remember()
+    if owner:
+        body = {"changes": {k: neutral[k] for k in keys}} if keys else {"changes": {}, "replace": True}
+        state = _patch(f"/api/shots/{owner}/trim", body)
+    else:
+        state = _patch("/api/grade/look", {"changes": {k: neutral[k] for k in (keys or neutral)}, "reasons": {"*": "Reset to neutral."}})
+    return [_text({"reset": keys or "all controls", "on": f"shot {owner}" if owner else "the look", "quality": _rules_summary(state)})]
 
 
 def set_finish(args: dict[str, Any]) -> list[dict[str, Any]]:
@@ -320,6 +484,52 @@ def export_video(args: dict[str, Any]) -> list[dict[str, Any]]:
 
 RGB = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}
 POINTS = {"type": "array", "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}}
+TRIPLE = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}
+
+
+def _n(text: str) -> dict[str, Any]:
+    return {"type": "number", "description": text}
+
+
+_ZONE = {"type": "object", "properties": {"exposure": _n("stops"), "saturation": _n("1 = unchanged"),
+                                          "temp": _n("stops, + warmer"), "tint": _n("stops, + magenta")}}
+CONTROL_PROPS: dict[str, Any] = {
+    "exposure": _n("Stops on linear light, 0 = unchanged. Black stays black."),
+    "temp": _n("White balance in stops: + warmer, - cooler, 0 = unchanged. Typical moves 0.05 to 0.3."),
+    "tint": _n("Stops: + toward magenta, - toward green, 0 = unchanged."),
+    "contrast": _n("1 = unchanged. Typical 1.05 to 1.25."),
+    "pivot": _n("Contrast pivot in DaVinci Intermediate, 0.336 = middle gray."),
+    "lift": {**RGB, "description": "Shadow level and color, R G B offsets, 0 = unchanged. Typical 0.005 to 0.03."},
+    "gamma": {**RGB, "description": "Midtone level and color, R G B offsets, 0 = unchanged."},
+    "gain": {**RGB, "description": "Highlight level and color, R G B multipliers, 1 = unchanged."},
+    "offset": {**RGB, "description": "Every tone, R G B in Resolve points, 25 = unchanged. 10 points = one stop."},
+    "saturation": _n("Resolve Sat, 50 = unchanged, 0 = black and white."),
+    "hue": _n("Turns every color, degrees, 0 = unchanged."),
+    "color_boost": _n("Vibrance: saturates gentle colors and leaves strong ones. 0 = unchanged, 1 = gentle colors doubled."),
+    "shadows": _n("Stops at the center of the shadows: + opens, - deepens. Black and middle gray stay."),
+    "highlights": _n("Stops at the center of the highlights: - recovers skies and windows, + lifts. Middle gray stays."),
+    "hdr": {"type": "object", "properties": {z: _ZONE for z in ("dark", "shadow", "light", "highlight", "specular")},
+            "description": "HDR zones by brightness: dark (under -3.5 stops), shadow (about -2), light (about +0.75: skin and upper mids), "
+                           "highlight (about +2.5), specular (+4.5 and up). Each takes exposure (stops), saturation (1 = unchanged), "
+                           "temp and tint (stops). Pass only the zones and fields to change."},
+    "rgb_mixer": {"type": "array", "items": RGB, "minItems": 3, "maxItems": 3,
+                  "description": "Rows: red, green, blue output, each the R G B input weights. [[1,0,0],[0,1,0],[0,0,1]] = unchanged."},
+    "log": {"type": "object", "properties": {"shadow": RGB, "midtone": RGB, "highlight": RGB,
+                                             "low_range": {"type": "number"}, "high_range": {"type": "number"}},
+            "description": "Log wheels: shadow, midtone, highlight (R G B offsets in DI, typical 0.005 to 0.03), each only inside its range. "
+                           "low_range (default 0.333) and high_range (0.55) set the borders."},
+    "hsv_gain": _n("HSV node saturation Gain: lifts strong colors. 1 = unchanged."),
+    "hsv_gamma": _n("HSV node saturation Gamma: lifts gentle colors such as skin. 0 = unchanged."),
+    "tone_curve": {**POINTS, "description": "Custom curve, all channels: [input, output] in DaVinci Intermediate (0 to 1, middle gray 0.336). [] = unchanged."},
+    "curves_rgb": {"type": "object", "properties": {"r": POINTS, "g": POINTS, "b": POINTS},
+                   "description": "One curve per channel (gang off): {r, g, b}, each [input, output] points in DI. [] = unchanged."},
+    "lum_vs_sat": {**POINTS, "description": "[luma in DI, saturation multiplier]."},
+    "hue_vs_hue": {**POINTS, "description": "[hue degrees, rotation degrees]. Red 0, yellow 60, green 120, cyan 180, blue 240, magenta 300."},
+    "hue_vs_sat": {**POINTS, "description": "[hue degrees, saturation multiplier]."},
+    "hue_vs_lum": {**POINTS, "description": "[hue degrees, brightness multiplier]. Grays stay."},
+    "sat_vs_sat": {**POINTS, "description": "[input chroma, saturation multiplier]. Chroma: skin about 0.03 to 0.06, strong colors 0.15 and up."},
+    "sat_vs_lum": {**POINTS, "description": "[input chroma, brightness multiplier]."},
+}
 
 TOOLS: list[tuple[str, str, dict[str, Any], Callable[[dict[str, Any]], list[dict[str, Any]]]]] = [
     ("project_status", "Clips, shots (ids, time ranges, faces, scene), the current look, strength, finish and quality rules. Start here.",
@@ -335,35 +545,70 @@ TOOLS: list[tuple[str, str, dict[str, Any], Callable[[dict[str, Any]], list[dict
      {"type": "object", "properties": {"shot_id": {"type": "string"}, "time": {"type": "number"},
                                        "stage": {"type": "string", "enum": ["graded", "balanced", "converted", "source"], "default": "graded"}},
       "required": ["shot_id"]}, read_shot),
-    ("get_grade", "The current look values (shared by all shots), strength, finish, and one shot's own balance if shot_id is given, with units.",
+    ("get_grade", "The look's controls that differ from neutral (shared by all shots), strength, finish, and with shot_id that shot's "
+                  "balance and its own trim, with units.",
      {"type": "object", "properties": {"shot_id": {"type": "string"}}}, get_grade),
-    ("adjust_look", "Change the shared look on every shot. Pass only the controls to change, as absolute values (read get_grade first). "
-                    "Small moves: wheels 0.005 to 0.03, contrast 0.05, exposure 0.1 to 0.3 stops.",
-     {"type": "object", "properties": {
-         "exposure": {"type": "number", "description": "Stops on a linear node, 0 = unchanged."},
-         "contrast": {"type": "number", "description": "1.0 = unchanged."}, "pivot": {"type": "number", "description": "0.336 = middle gray."},
-         "lift": {**RGB, "description": "R G B offsets for shadows, 0 = unchanged."},
-         "gamma": {**RGB, "description": "R G B offsets for midtones, 0 = unchanged."},
-         "gain": {**RGB, "description": "R G B multipliers for highlights, 1 = unchanged."},
-         "saturation": {"type": "number", "description": "Resolve Sat, 50 = unchanged."},
-         "hsv_gain": {"type": "number", "description": "HSV node saturation Gain: lifts strong colors. 1 = unchanged."},
-         "hsv_gamma": {"type": "number", "description": "HSV node saturation Gamma: lifts gentle colors such as skin. 0 = unchanged."},
-         "tone_curve": {**POINTS, "description": "Custom curve points [input, output] in DaVinci Intermediate, all channels."},
-         "hue_vs_hue": {**POINTS, "description": "[hue degrees, rotation degrees]."},
-         "hue_vs_sat": {**POINTS, "description": "[hue degrees, saturation multiplier]."},
-         "lum_vs_sat": {**POINTS, "description": "[luma 0..1, saturation multiplier]."},
-         "reason": {"type": "string", "description": "One line on why: it shows in the app and the recipe."}}}, adjust_look),
-    ("adjust_shot", "Correct one shot on its own: exposure and white balance on its linear node, black point, contrast and saturation. "
-                    "Relative for exposure, warmth and tint; absolute for contrast and saturation.",
+    ("list_controls", "Every color control with its range, unit, what it does and the DaVinci Resolve tool it matches.",
+     {"type": "object", "properties": {}}, list_controls),
+    ("adjust_look", "Change the shared look on every shot. Every Resolve-style control: exposure, temp, tint, contrast, pivot, lift, "
+                    "gamma, gain, offset, saturation, hue, color boost, shadows, highlights, HDR zones, log wheels, RGB mixer, HSV "
+                    "saturation, custom and RGB curves, hue and sat curves. Pass only the controls to change, as absolute values "
+                    "(read get_grade first). Keep moves small.",
+     {"type": "object", "properties": {**CONTROL_PROPS,
+                                       "reason": {"type": "string", "description": "One line on why: it shows in the app and the recipe."}}},
+     adjust_look),
+    ("adjust_shot", "Correct one shot on its own. Balance (relative): exposure_stops, warmth_stops, tint_stops, black_offset; match "
+                    "(absolute): contrast, saturation. trim: any look control for this shot only, absolute, same names and units as "
+                    "adjust_look. reset_trim clears the shot's trim first.",
      {"type": "object", "properties": {
          "shot_id": {"type": "string"},
          "exposure_stops": {"type": "number", "description": "Brighter or darker, in stops, relative."},
          "warmth_stops": {"type": "number", "description": "Positive warmer (more red, less blue), relative."},
          "tint_stops": {"type": "number", "description": "Positive toward magenta (less green), relative."},
          "black_offset": {"type": "number", "description": "Offset points on linear light, relative. Negative deepens hazy blacks."},
-         "contrast": {"type": "number", "description": "This shot's own contrast, absolute, 1 = unchanged."},
-         "saturation": {"type": "number", "description": "This shot's own Sat, absolute, 50 = unchanged."}},
+         "contrast": {"type": "number", "description": "This shot's match contrast, absolute, 1 = unchanged."},
+         "saturation": {"type": "number", "description": "This shot's match Sat, absolute, 50 = unchanged."},
+         "trim": {"type": "object", "properties": CONTROL_PROPS, "description": "This shot's own color controls."},
+         "reset_trim": {"type": "boolean"},
+         "reason": {"type": "string"}},
       "required": ["shot_id"]}, adjust_shot),
+    ("sample_color", "The color under one point of a shot (x and y from 0 to 1, top left origin): its hue, chroma and lum as a "
+                     "qualifier sees it, the graded display value, and a starting qualifier around it.",
+     {"type": "object", "properties": {"shot_id": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"},
+                                       "time": {"type": "number"},
+                                       "of": {"type": "string", "enum": ["look", "shot"], "default": "look",
+                                              "description": "Sample where a secondary of the look (or of this shot's trim) would key."}},
+      "required": ["shot_id", "x", "y"]}, sample_color),
+    ("set_secondary", "Add, change or remove a qualifier secondary: key one color family or area (hue, sat, lum ranges), then change "
+                      "exposure, temp, tint, saturation or hue only there, like a Qualifier node in Resolve. With shot_id it belongs to "
+                      "that shot's trim, without it to the look on every shot. pick seeds the key from a point of the frame. Omit index "
+                      "to add a new one. Returns the key as an image.",
+     {"type": "object", "properties": {
+         "shot_id": {"type": "string", "description": "Owner: this shot's trim. Omit for the shared look."},
+         "index": {"type": "integer", "minimum": 1, "description": "Which secondary, from 1. Omit to add a new one."},
+         "remove": {"type": "boolean"},
+         "name": {"type": "string", "description": "Sky, Skin, Foliage..."},
+         "pick": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "time": {"type": "number"},
+                                                   "shot_id": {"type": "string"}},
+                  "required": ["x", "y"], "description": "Point to key on, x and y from 0 to 1 (top left origin). Fills hue, sat and lum you leave out."},
+         "hue": {**TRIPLE, "description": "[center, width, soft] in degrees. [] turns the hue key off."},
+         "sat": {**TRIPLE, "description": "[low, high, soft] in chroma (gray 0, skin about 0.03 to 0.06). [] turns it off."},
+         "lum": {**TRIPLE, "description": "[low, high, soft] in DI (black 0, middle gray 0.336). [] turns it off."},
+         "invert": {"type": "boolean", "description": "Correct everything outside the key."},
+         "enabled": {"type": "boolean"},
+         "exposure": _n("Stops inside the key."), "temp": _n("Stops inside the key, + warmer."), "tint": _n("Stops inside the key, + magenta."),
+         "saturation": _n("Multiplier inside the key, 1 = unchanged."), "hue_rotate": _n("Degrees inside the key."),
+         "reason": {"type": "string"}}}, set_secondary),
+    ("view_key", "See what a secondary selects on a shot: Highlight mode (selection in color, the rest gray) or the matte, plus the "
+                 "share of the frame selected.",
+     {"type": "object", "properties": {"shot_id": {"type": "string"}, "index": {"type": "integer", "minimum": 1, "default": 1},
+                                       "of": {"type": "string", "enum": ["look", "shot"], "default": "look"},
+                                       "mode": {"type": "string", "enum": ["highlight", "matte"], "default": "highlight"},
+                                       "time": {"type": "number"}, "width": {"type": "integer", "default": 640, "minimum": 320, "maximum": 1920}},
+      "required": ["shot_id"]}, view_key),
+    ("reset_controls", "Put controls back to neutral: on the look, or with shot_id on that shot's trim. Omit controls to reset all of them.",
+     {"type": "object", "properties": {"shot_id": {"type": "string"}, "controls": {"type": "array", "items": {"type": "string"}}}},
+     reset_controls),
     ("set_finish", "Relight (background darker around tracked faces), vignette, grain, noise reduction, sharpening, clarity.",
      {"type": "object", "properties": {
          "relight_on": {"type": "boolean"}, "relight_stops": {"type": "number", "description": "Background down, 0.2 to 1.5."},
@@ -391,9 +636,13 @@ TOOLS: list[tuple[str, str, dict[str, Any], Callable[[dict[str, Any]], list[dict
 HANDLERS = {name: fn for name, _, _, fn in TOOLS}
 
 INSTRUCTIONS = (
-    "You grade video in Color Grader, live: every change shows in the app the user watches. Work like a colorist: "
-    "project_status, then view_shot to see the source and the grade with numbers. Fix each shot's balance first "
-    "(adjust_shot: exposure, white balance, black point), then the shared look (adjust_look), then finish (set_finish). "
+    "You grade video in Color Grader, live: every change shows in the app the user watches. Work like a colorist. "
+    "Start with project_status, then view_shot to see the source and the grade with numbers. Order of work: "
+    "1. each shot's balance (adjust_shot: exposure, warmth, tint, black point; its trim takes any control for that shot alone); "
+    "2. the shared look (adjust_look: exposure, temp, tint, lift, gamma, gain, offset, contrast, saturation, hue, color boost, "
+    "shadows, highlights, HDR zones, log wheels, RGB mixer, curves; list_controls has ranges and units); "
+    "3. secondaries for one color family or area such as sky, skin or foliage (sample_color on a point, set_secondary with pick, "
+    "view_key to check the selection); 4. finish (set_finish: relight, vignette, grain, noise reduction, sharpening, clarity). "
     "After every change, view_shot again and judge picture and numbers together: skin near the skin tone line and around "
     "40 to 70 percent luma, blacks near 2 to 5 percent, nothing new clipped, no failing rules. Keep moves small. "
     "design_looks gives three starting points built from the shot. undo reverts the last change."

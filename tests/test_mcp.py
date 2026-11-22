@@ -57,8 +57,8 @@ class Client:
             return None
         return json.loads(self.p.stdout.readline())
 
-    def tool(self, name, **args):
-        r = self.call("tools/call", {"name": name, "arguments": args})
+    def tool(self, tool_name, /, **args):
+        r = self.call("tools/call", {"name": tool_name, "arguments": args})
         return r["result"]
 
     def close(self):
@@ -117,5 +117,62 @@ def test_mcp_server_says_when_the_app_is_not_running():
         res = c.tool("project_status")
         assert res["isError"] and "not running" in res["content"][0]["text"]
         assert c.call("nope/method")["error"]["code"] == -32601
+    finally:
+        c.close()
+
+
+def test_mcp_server_drives_every_control_secondaries_and_undo(proj, workdir, app_url):
+    clip = load_clip(proj, flog2_clip(workdir / "mcp_all.mov", frames_each=12, size=(320, 180)))
+    auto.build(proj, refit=False)
+    shot = proj.shots_of(clip["id"])[0]
+    temp0, trim0 = proj.state["look"]["temp"], proj.shot(shot["id"])["grade"]["trim"]
+    c = Client(app_url)
+    try:
+        c.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}})
+        names = {t["name"] for t in c.call("tools/list")["result"]["tools"]}
+        assert {"list_controls", "set_secondary", "view_key", "sample_color", "reset_controls"} <= names
+        spec = json.loads(c.tool("list_controls")["content"][0]["text"])
+        assert {"hdr", "log", "rgb_mixer", "secondaries"} <= {x["key"] for x in spec["controls"]}
+
+        res = c.tool("adjust_look", temp=0.25, tint=-0.05, offset=[24.8, 25, 25.2], hdr={"highlight": {"exposure": -0.4}},
+                     log={"shadow": [0, 0, 0.01]}, curves_rgb={"b": [[0, 0.01], [1, 1]]}, color_boost=0.2, shadows=0.3, reason="Autumn")
+        assert not res["isError"], res
+        look = proj.state["look"]
+        assert look["temp"] == 0.25 and look["hdr"]["highlight"]["exposure"] == -0.4 and look["log"]["shadow"] == [0, 0, 0.01]
+        assert look["curves_rgb"]["b"] == [[0.0, 0.01], [1.0, 1.0]] and look["reasons"]["temp"] == "Autumn"
+        assert not c.tool("adjust_shot", shot_id=shot["id"], trim={"exposure": 0.3, "highlights": -0.4})["isError"]
+        assert proj.shot(shot["id"])["grade"]["trim"] == {"exposure": 0.3, "highlights": -0.4}
+        bad = c.tool("adjust_shot", shot_id=shot["id"], trim={"brightness": 1})
+        assert bad["isError"] and "Unknown control" in bad["content"][0]["text"]
+
+        sample = json.loads(c.tool("sample_color", shot_id=shot["id"], x=0.3, y=0.4)["content"][0]["text"])
+        assert "suggested_qualifier" in sample and "graded_luma_percent" in sample
+        res = c.tool("set_secondary", name="Picked", pick={"x": 0.3, "y": 0.4, "shot_id": shot["id"]}, saturation=0.7)
+        assert not res["isError"], res
+        info = json.loads(res["content"][0]["text"])
+        assert info["key_coverage_percent"] > 0.5 and res["content"][1]["type"] == "image"
+        sec = proj.state["look"]["secondaries"][0]
+        assert sec["name"] == "Picked" and sec["adjust"]["saturation"] == 0.7 and sec["lum"]
+        key = c.tool("view_key", shot_id=shot["id"], index=1, mode="matte")
+        assert not key["isError"] and key["content"][1]["type"] == "image" and "selected" in key["content"][0]["text"]
+        assert c.tool("view_key", shot_id=shot["id"], index=2)["isError"]
+        assert not c.tool("set_secondary", index=1, remove=True)["isError"]
+        assert proj.state["look"]["secondaries"] == []
+
+        assert not c.tool("reset_controls", controls=["temp", "hdr"])["isError"]
+        assert proj.state["look"]["temp"] == 0.0 and proj.state["look"]["hdr"]["highlight"]["exposure"] == 0.0
+        assert proj.state["look"]["shadows"] == 0.3                                   # the other controls stay
+        assert not c.tool("reset_controls", shot_id=shot["id"])["isError"]
+        assert proj.shot(shot["id"])["grade"]["trim"] == {}
+
+        for _ in range(2):                                                            # undo both resets
+            assert not c.tool("undo")["isError"]
+        assert proj.state["look"]["temp"] == 0.25 and proj.shot(shot["id"])["grade"]["trim"] == {"exposure": 0.3, "highlights": -0.4}
+        assert not c.tool("undo")["isError"]                                          # undo the removal
+        assert proj.state["look"]["secondaries"][0]["name"] == "Picked"
+        for _ in range(3):
+            assert not c.tool("undo")["isError"]
+        assert proj.state["look"]["temp"] == temp0 and proj.shot(shot["id"])["grade"]["trim"] == trim0
+        assert c.tool("undo")["isError"]
     finally:
         c.close()

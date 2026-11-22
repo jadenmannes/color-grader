@@ -465,6 +465,76 @@ def set_shot_grade(shot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, 
     return _recheck()
 
 
+@app.get("/api/controls")
+def get_controls() -> dict[str, Any]:
+    """Every color control with its range, unit, help and Resolve tool: the app's panel and the MCP server build on it."""
+    from .grade import controls
+
+    return {"controls": controls.SPEC, "finish": controls.FINISH_SPEC, "neutral": controls.full_neutral(), "zones": list(controls.ZONES)}
+
+
+@app.get("/api/grade/controls")
+def grade_controls(shot: str | None = None) -> dict[str, Any]:
+    """The controls that differ from neutral: on the look (as stored, before strength) and on one shot's trim."""
+    from .grade import controls
+
+    p = project.get()
+    out = {"look_name": p.state["look"].get("name"), "strength": p.state.get("strength"), "look": controls.changed(p.state["look"])}
+    if shot:
+        try:
+            out["trim"] = controls.changed(p.shot(shot)["grade"].get("trim") or {})
+        except (project.ProjectError, KeyError) as exc:
+            raise _err(exc, 404)
+    return out
+
+
+@app.patch("/api/grade/look")
+def patch_look(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Change some controls of the shared look: {changes: {control: value}, reasons: {control: why}, recheck: bool}."""
+    try:
+        now = project.get().adjust_controls(body.get("changes") or {}, None, body.get("reasons"))
+    except ValueError as exc:
+        raise _err(exc)
+    return _recheck() if body.get("recheck", True) else {"ok": True, "look": now}
+
+
+@app.patch("/api/shots/{shot_id}/trim")
+def patch_trim(shot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Change some controls of one shot's own trim. replace: true starts the trim from neutral."""
+    try:
+        now = project.get().adjust_controls(body.get("changes") or {}, shot_id, body.get("reasons"), bool(body.get("replace")))
+    except project.ProjectError as exc:
+        raise _err(exc, 404)
+    except ValueError as exc:
+        raise _err(exc)
+    return _recheck() if body.get("recheck", True) else {"ok": True, "trim": now}
+
+
+@app.get("/api/key")
+def key_view(clip: str, t: float = 0.0, w: int = Query(960, ge=64, le=3840), shot: str | None = None, target: str = "look",
+             index: int = Query(0, ge=0), mode: str = "highlight") -> Response:
+    """What a secondary selects: Highlight mode (selection in color, the rest gray) or the matte."""
+    if target not in ("look", "shot") or mode not in ("highlight", "matte"):
+        raise HTTPException(400, "target: look or shot. mode: highlight or matte")
+    try:
+        img, cover = project.get().key_frame(clip, t, w, shot, target, index, mode)
+    except (project.ProjectError, media.MediaError, KeyError) as exc:
+        raise _err(exc)
+    return Response(pipeline.to_jpeg(img), media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store", "X-Key-Coverage": f"{cover:.1f}"})
+
+
+@app.get("/api/sample")
+def sample_color(clip: str, x: float, y: float, t: float = 0.0, shot: str | None = None, target: str = "look") -> dict[str, Any]:
+    """The color under a point of the frame and a starting qualifier around it."""
+    if target not in ("look", "shot"):
+        raise HTTPException(400, "target: look or shot")
+    try:
+        return project.get().sample(clip, t, x, y, shot, target)
+    except (project.ProjectError, media.MediaError, KeyError) as exc:
+        raise _err(exc)
+
+
 @app.put("/api/shots/{shot_id}/scene")
 def set_scene(shot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:

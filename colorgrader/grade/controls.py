@@ -240,6 +240,26 @@ def apply_secondary(di: np.ndarray, sec: dict[str, Any]) -> np.ndarray:
 # ---------------------------------------------------------------- chain
 def apply(di: np.ndarray, c: dict[str, Any]) -> np.ndarray:
     """Every control in node order, on DaVinci Intermediate values. Missing keys count as neutral."""
+    di = apply_primary(di, c)
+    for sec in c.get("secondaries") or []:
+        di = apply_secondary(di, sec)
+    return di
+
+
+def qualifier_input(di: np.ndarray, c: dict[str, Any], index: int | None = None) -> np.ndarray:
+    """The picture a secondary keys on: every control before it, including the secondaries above it in the list.
+
+    index None means a new secondary added at the end of the list.
+    """
+    di = apply_primary(di, c)
+    secs = c.get("secondaries") or []
+    for sec in secs[:len(secs) if index is None else max(0, int(index))]:
+        di = apply_secondary(di, sec)
+    return di
+
+
+def apply_primary(di: np.ndarray, c: dict[str, Any]) -> np.ndarray:
+    """Every control before the secondaries."""
     g = c.get
     gains = wb_gains(g("exposure", 0.0), g("temp", 0.0), g("tint", 0.0))
     hdr = g("hdr")
@@ -278,8 +298,6 @@ def apply(di: np.ndarray, c: dict[str, Any]) -> np.ndarray:
     di = ops.hsl_curves(di, hue_vs_sat=skin.get("hue_vs_sat"), hue_vs_hue=skin.get("hue_vs_hue"))
     di = ops.hsl_curves(di, sat_vs_lum=g("sat_vs_lum"))
     di = ops.hsl_curves(di, sat_vs_sat=g("sat_vs_sat"))
-    for sec in g("secondaries") or []:
-        di = apply_secondary(di, sec)
     return di
 
 
@@ -398,6 +416,172 @@ def merge(base: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:
         else:
             out[key] = copy.deepcopy(val)
     return out
+
+
+def describe_color(rgb_di) -> dict[str, float]:
+    """Hue (degrees), chroma and lum (DI) of one DaVinci Intermediate color: the numbers a qualifier keys on."""
+    lum, _, _, hue, chroma = ops.hsl_split(np.asarray(rgb_di, dtype=F32).reshape(1, 3))
+    return {"hue": round(float(hue[0]), 1), "chroma": round(float(chroma[0]), 4), "lum": round(float(lum[0]), 3)}
+
+
+def suggest_qualifier(hue: float, chroma: float, lum: float) -> dict[str, list[float]]:
+    """A starting key around one sampled color: its hue family, its saturation and up, a band of brightness around it."""
+    q = {"lum": [round(max(0.0, lum - 0.18), 3), round(min(1.0, lum + 0.18), 3), 0.06]}
+    if chroma >= 0.012:          # a real color: key its hue family
+        q["hue"] = [round(float(hue), 1), 40.0, 20.0]
+        q["sat"] = [round(chroma * 0.4, 3), 1.0, round(max(0.004, chroma * 0.3), 3)]
+    else:                        # near gray: key low saturation instead
+        q["sat"] = [0.0, round(max(0.02, chroma * 2.5), 3), 0.01]
+    return q
+
+
+# ------------------------------------------------- checking outside input
+NUMBER_KEYS = ("exposure", "temp", "tint", "contrast", "pivot", "saturation", "hue", "color_boost", "shadows", "highlights")
+RGB_KEYS = ("lift", "gamma", "gain", "offset")
+CURVE_KEYS = ("tone_curve", "lum_vs_sat", "sat_vs_sat", "sat_vs_lum")
+HUE_CURVE_KEYS = ("hue_vs_hue", "hue_vs_sat", "hue_vs_lum")
+
+
+def _spec(key: str) -> dict[str, Any]:
+    return next(x for x in SPEC if x["key"] == key)
+
+
+def _num(v, what: str) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{what} takes a number, got {v!r}.")
+    if not np.isfinite(f):
+        raise ValueError(f"{what} takes a finite number.")
+    return f
+
+
+def _clamp(v: float, lo, hi) -> float:
+    return float(min(max(v, lo if lo is not None else v), hi if hi is not None else v))
+
+
+def _points(v, what: str, hue: bool = False) -> list[list[float]]:
+    if v is None:
+        return []
+    if not isinstance(v, (list, tuple)):
+        raise ValueError(f"{what} takes a list of [input, output] points.")
+    pts = []
+    for p in v:
+        if not isinstance(p, (list, tuple)) or len(p) != 2:
+            raise ValueError(f"{what}: every point is [input, output], got {p!r}.")
+        a, b = _num(p[0], what), _num(p[1], what)
+        pts.append([a % 360.0 if hue else a, b])
+    pts.sort(key=lambda q: q[0])
+    return pts
+
+
+def _rgb3(v, what: str, lo=None, hi=None) -> list[float]:
+    if isinstance(v, (int, float)):
+        v = [v, v, v]
+    if not isinstance(v, (list, tuple)) or len(v) != 3:
+        raise ValueError(f"{what} takes three numbers: R, G, B.")
+    return [_clamp(_num(x, what), lo, hi) for x in v]
+
+
+def clean_secondary(sec: Any) -> dict[str, Any]:
+    if not isinstance(sec, dict):
+        raise ValueError("A secondary is an object with name, hue, sat, lum, invert, enabled and adjust.")
+    out: dict[str, Any] = {"name": str(sec.get("name") or "Secondary")[:40], "enabled": bool(sec.get("enabled", True)),
+                           "invert": bool(sec.get("invert", False))}
+    for q in ("hue", "sat", "lum"):
+        v = sec.get(q)
+        if v:
+            if not isinstance(v, (list, tuple)) or len(v) != 3:
+                raise ValueError(f"Secondary {q} takes three numbers: " + ("center, width, soft (degrees)." if q == "hue" else "low, high, soft."))
+            a, b, c = (_num(x, f"secondary {q}") for x in v)
+            out[q] = [a % 360.0, _clamp(b, 1.0, 360.0), _clamp(c, 0.0, 180.0)] if q == "hue" else [max(0.0, a), max(a, b), max(0.0, c)]
+    adj = sec.get("adjust") or {}
+    if not isinstance(adj, dict):
+        raise ValueError("Secondary adjust is an object: exposure, temp, tint, saturation, hue.")
+    unknown = set(adj) - set(SEC_ADJUST_NEUTRAL)
+    if unknown:
+        raise ValueError(f"Secondary adjust knows exposure, temp, tint, saturation and hue, not {', '.join(sorted(unknown))}.")
+    lim = {"exposure": (-3.0, 3.0), "temp": (-1.5, 1.5), "tint": (-1.0, 1.0), "saturation": (0.0, 3.0), "hue": (-180.0, 180.0)}
+    out["adjust"] = {k: _clamp(_num(adj.get(k, SEC_ADJUST_NEUTRAL[k]), f"secondary {k}"), *lim[k]) for k in SEC_ADJUST_NEUTRAL}
+    return out
+
+
+def clean(changes: dict[str, Any]) -> dict[str, Any]:
+    """Check a partial control set from outside (the app's panel, the MCP server). Known keys, right shapes, numbers
+    clamped to each control's range. Raises ValueError with a message a person or an assistant can act on."""
+    if not isinstance(changes, dict):
+        raise ValueError("Controls come as an object: {control: value}.")
+    known = full_neutral()
+    out: dict[str, Any] = {}
+    for key, v in changes.items():
+        if key not in known:
+            raise ValueError(f"Unknown control {key!r}. Controls: {', '.join(known)}.")
+        sp = _spec(key)
+        if key in NUMBER_KEYS:
+            out[key] = _clamp(_num(v, key), sp["min"], sp["max"])
+        elif key in RGB_KEYS:
+            out[key] = _rgb3(v, key, sp["min"], sp["max"])
+        elif key in CURVE_KEYS or key in HUE_CURVE_KEYS:
+            out[key] = _points(v, key, hue=key in HUE_CURVE_KEYS)
+        elif key == "hsv_sat":
+            if not isinstance(v, dict):
+                raise ValueError("hsv_sat takes {gain, gamma}.")
+            out[key] = {f: _num(v[f], f"hsv_sat {f}") for f in ("gain", "gamma") if f in v}
+        elif key == "curves_rgb":
+            if not isinstance(v, dict) or set(v) - {"r", "g", "b"}:
+                raise ValueError("curves_rgb takes {r, g, b}, each a list of [input, output] points.")
+            out[key] = {ch: _points(pts, f"curves_rgb {ch}") for ch, pts in v.items()}
+        elif key == "hdr":
+            if not isinstance(v, dict) or set(v) - set(ZONES):
+                raise ValueError(f"hdr takes zones {', '.join(ZONES)}, each with exposure, saturation, temp, tint.")
+            zones = {}
+            for z, fields in v.items():
+                if not isinstance(fields, dict) or set(fields) - set(ZONE_NEUTRAL):
+                    raise ValueError(f"hdr {z} takes exposure, saturation, temp and tint.")
+                zones[z] = {f: _clamp(_num(x, f"hdr {z} {f}"), *sp["fields"][f][:2]) for f, x in fields.items()}
+            out[key] = zones
+        elif key == "rgb_mixer":
+            if not isinstance(v, (list, tuple)) or len(v) != 3:
+                raise ValueError("rgb_mixer takes three rows (red, green, blue output), each three numbers.")
+            out[key] = [_rgb3(row, "rgb_mixer row", sp["min"], sp["max"]) for row in v]
+        elif key == "log":
+            if not isinstance(v, dict) or set(v) - {"shadow", "midtone", "highlight", "low_range", "high_range"}:
+                raise ValueError("log takes shadow, midtone, highlight (three numbers each), low_range and high_range.")
+            lg = {}
+            for f, x in v.items():
+                if f in ("low_range", "high_range"):
+                    lg[f] = _clamp(_num(x, f"log {f}"), *sp["ranges"][f][:2])
+                else:
+                    lg[f] = _rgb3(x, f"log {f}", sp["min"], sp["max"])
+            out[key] = lg
+        elif key == "secondaries":
+            if not isinstance(v, (list, tuple)):
+                raise ValueError("secondaries takes a list.")
+            if len(v) > 8:
+                raise ValueError("Up to 8 secondaries.")
+            out[key] = [clean_secondary(x) for x in v]
+    return out
+
+
+def _close(a, b) -> bool:
+    if isinstance(a, dict) or isinstance(b, dict):
+        a, b = a or {}, b or {}
+        return isinstance(a, dict) and isinstance(b, dict) and all(_close(a.get(k), b.get(k)) for k in set(a) | set(b))
+    if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+        a, b = a or [], b or []
+        return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b))
+    if a is None or b is None:
+        return a is b
+    try:
+        return abs(float(a) - float(b)) <= 1e-9
+    except (TypeError, ValueError):
+        return a == b
+
+
+def changed(c: dict[str, Any]) -> dict[str, Any]:
+    """Only the controls that differ from neutral: what a trim stores and what a reader needs to see."""
+    neutral_set = full_neutral()
+    return {k: copy.deepcopy(v) for k, v in c.items() if k in neutral_set and not _close(v, neutral_set[k])}
 
 
 # ------------------------------------------------------------------ spec
