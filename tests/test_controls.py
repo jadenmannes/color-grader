@@ -183,3 +183,29 @@ def test_api_edits_controls_partially_and_checks_input(proj, client, workdir):
     assert client.get("/api/key", params={"clip": clip["id"], "t": t, "target": "look", "index": 0}).status_code == 400
     r = client.patch(f"/api/shots/{shot['id']}/trim", json={"changes": {}, "replace": True, "recheck": False})
     assert r.json()["trim"] == {} and proj.shot(shot["id"])["grade"]["trim"] == {}
+
+
+def test_rebuild_keeps_hand_set_controls_and_trims(proj, workdir):
+    """Rebuild grade refits the look to the reference. Controls the fit never sets stay, and so does every shot trim."""
+    import cv2
+
+    from colorgrader import synth
+    from colorgrader.grade import auto
+
+    from helpers import flog2_clip, load_clip
+
+    clip = load_clip(proj, flog2_clip(workdir / "keep_hand.mov", frames_each=12, size=(320, 180)))
+    ref = (np.clip(synth.procedural_scene(320, 180, seed=3), 0, 1) ** (1 / 2.4) * 255).astype(np.uint8)
+    cv2.imwrite(str(workdir / "keep_ref.png"), ref[..., ::-1])
+    proj.set_reference(str(workdir / "keep_ref.png"))
+    auto.build(proj, refit=True)
+    shot = proj.shots_of(clip["id"])[0]
+    proj.adjust_controls({"temp": 0.3, "secondaries": [{"name": "Sky", "hue": [214, 50, 25], "adjust": {"saturation": 0.8}}]},
+                         reasons={"temp": "Warmer autumn light."})
+    proj.adjust_controls({"exposure": 0.4}, shot["id"])
+    report = auto.build(proj, refit=True)
+    look = proj.state["look"]
+    assert look["temp"] == 0.3 and [s["name"] for s in look["secondaries"]] == ["Sky"]
+    assert look["reasons"]["temp"] == "Warmer autumn light."
+    assert proj.shot(shot["id"])["grade"]["trim"] == {"exposure": 0.4}
+    assert any("stay on top of the fitted look" in n for n in report["notes"])

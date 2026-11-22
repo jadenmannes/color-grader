@@ -12,7 +12,7 @@ from ..analysis.neutral import estimate_cast, gains_from_cast
 from ..color import ops
 from ..color import working as W
 from .. import settings
-from . import balance, lookfit, match, model, pipeline, quality, reference, skin as skin_mod
+from . import balance, controls, lookfit, match, model, pipeline, quality, reference, skin as skin_mod
 
 F32 = np.float32
 DWG_Y = np.array([0.27411851, 0.87363190, -0.14775041], dtype=F32)
@@ -759,9 +759,20 @@ def build(proj, progress: Callable[[float, str], None] | None = None, refit: boo
     ref = st.get("reference")
     if ref and refit:
         b.say(0.5, "Matching the look to the reference")
+        # controls the fit never sets (temp, HDR zones, secondaries...) were set by hand: they stay on top of the new fit
+        own = controls.changed({k: look[k] for k in controls.neutral() if k in look})
+        why = {k: v for k, v in (look.get("reasons") or {}).items() if k in own}
         look = b.fit_reference(ref, proj.reference_arrays())
         if not b.fit_info.get("same_content"):
             look = finish_tone(b, look, float(st.get("polish", 85)) / 100.0)
+        if own:
+            look.update(copy.deepcopy(own))
+            look.setdefault("reasons", {}).update(why)
+            names_ = {"temp": "temperature", "tint": "tint", "hdr": "HDR zones", "rgb_mixer": "RGB mixer", "offset": "offset",
+                      "log": "log wheels", "shadows": "shadows", "highlights": "highlights", "curves_rgb": "RGB curves", "hue": "hue",
+                      "color_boost": "color boost", "hue_vs_lum": "Hue vs Lum", "secondaries": "secondaries"}
+            b.notes.append("Your own color controls stay on top of the fitted look: " + ", ".join(names_.get(k, k) for k in own)
+                           + ". Reset them in the Color tab to see the plain fit.")
     b.say(0.7, "Protecting skin")
     if not model.is_neutral_look(dict(look, skin={"hue_vs_hue": [], "hue_vs_sat": []})) or look.get("source") in ("reference", "suggestion", "saved"):
         look = b.apply_skin(look)
