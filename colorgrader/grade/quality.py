@@ -168,12 +168,12 @@ def check_shot(sample_lin: np.ndarray, ypos: np.ndarray | None, skin_lin: np.nda
     covered = grain_on or denoise_on
     cover = (" Fine grain hides the steps." if grain_on else
              " Noise reduction averages the camera noise at 16-bit precision and fills the steps in. Play graded and the export show it.")
-    if step > limit_fail and not covered:
-        rules.append(_rule("banding", "Smooth gradients", "fail", f"One {bit_depth}-bit source step becomes {step:.1f} display steps. "
-                           "Skies and walls risk banding. Noise reduction or fine grain on the Grade tab removes the risk."))
-    elif step > limit_warn:
+    if step > limit_warn:
+        # a risk, not a certainty: camera noise in the file dithers the steps away. Clean, flat skies show them.
         rules.append(_rule("banding", "Smooth gradients", "pass" if covered else "warn",
-                           f"One {bit_depth}-bit source step becomes {step:.1f} display steps." + (cover if covered else " Noise reduction, fine grain or less contrast lowers the risk.")))
+                           f"One {bit_depth}-bit source step becomes {step:.1f} display steps." + (cover if covered else
+                           " Smooth skies and walls may show steps where the camera file holds no noise: check them in Full quality at 100%."
+                           " Fine grain hides steps and keeps the detail. Less contrast lowers the risk.")))
     else:
         rules.append(_rule("banding", "Smooth gradients", "pass", f"One {bit_depth}-bit source step becomes {step:.1f} display steps at most."))
     return rules

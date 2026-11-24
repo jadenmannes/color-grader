@@ -661,7 +661,7 @@ FINISH_SPEC: list[dict[str, Any]] = [
        "Windows, Tracker and an Outside node", exact=False, kind="finish"),
     _n("vignette", "Vignette", "Finish", None, 0.0, 0.8, 0.05, "stops", "Corners darker.", "Window, Invert, Offset", exact=False, kind="finish"),
     _n("grain", "Grain", "Finish", None, 0.0, 1.2, 0.05, "%", "Fine film grain.", "Film Grain (Studio)", exact=False, kind="finish"),
-    _n("denoise", "Noise reduction", "Finish", 0, 0, 100, 5, "", "Cleans camera noise before the grade.", "Motion Effects NR (Studio)",
+    _n("denoise", "Noise reduction", "Finish", 0, 0, 100, 5, "", "For visibly noisy, low-light footage only: it removes fine texture with the noise. 0 for well-exposed footage.", "Motion Effects NR (Studio)",
        exact=False, kind="finish"),
     _n("sharpen", "Sharpen", "Finish", 0, 0, 100, 5, "", "Fine edge contrast.", "Blur palette, Radius under 0.50", exact=False, kind="finish"),
     _n("clarity", "Mid/Detail (clarity)", "Finish", 0, 0, 100, 5, "", "Wide local contrast for faces and textures.",

@@ -452,7 +452,7 @@ def test_first_build_sets_a_finished_picture(proj, workdir):
     try:
         auto.build(proj)
         d = proj.state["finish"]["detail"]
-        assert d["sharpen"] > 0 and d["clarity"] > 0 and d["denoise"] > 0      # log footage: clean and crisp from the start
+        assert d["sharpen"] > 0 and d["clarity"] > 0 and d["denoise"] == 0     # crisp from the start; noise reduction costs texture
         assert not proj.state["finish"]["grain"]["enabled"]                    # the build never adds grain on its own
         proj.set_finish({"detail": {"sharpen": 0, "clarity": 0, "denoise": 0}})
         auto.build(proj)

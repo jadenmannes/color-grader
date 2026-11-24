@@ -204,7 +204,7 @@ function GradeTab({ ctx, shot, onLive }) {
           <span style="width:70px">Vignette</span>
           <input type="range" min="0.05" max="0.8" step="0.05" value=${fin.vignette.amount} onChange=${(e) => setFinish({ vignette: { amount: parseFloat(e.target.value) } })} />
           <span class="mono" style="width:74px">${fin.vignette.amount.toFixed(2)} stops</span></div>
-        ${[['denoise', 'Noise reduction', 'Cleans camera noise before the grade. Log footage needs it most.'],
+        ${[['denoise', 'Noise reduction', 'For visibly noisy, low-light footage only. It removes fine texture along with the noise: leave it at 0 for well-exposed footage.'],
            ['sharpen', 'Sharpen', 'Fine edge contrast. The crisp part of a finished picture.'],
            ['clarity', 'Clarity', 'Wide local contrast. Gives faces and buildings shape.']].map(([key, label, tip]) => html`
           <div class="row" title=${tip}><span style="width:112px;margin-left:22px">${label}</span>

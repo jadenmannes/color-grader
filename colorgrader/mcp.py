@@ -721,6 +721,7 @@ INSTRUCTIONS = (
     "shadows, highlights, HDR zones, log wheels, RGB mixer, curves; list_controls has ranges and units); "
     "3. secondaries for one color family or area such as sky, skin or foliage (sample_color on a point, set_secondary with pick, "
     "view_key to check the selection); 4. finish (set_finish: relight, vignette, grain, noise reduction, sharpening, clarity). "
+    "Keep noise reduction at 0 unless the footage is visibly noisy in low light: it removes texture along with the noise. "
     "After every change, view_shot again and judge picture and numbers together: skin near the skin tone line and around "
     "40 to 70 percent luma, blacks near 2 to 5 percent, nothing new clipped, no failing rules. Keep moves small. "
     "design_looks gives three starting points built from the shot. undo reverts the last change."
