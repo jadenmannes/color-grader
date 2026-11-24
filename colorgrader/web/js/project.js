@@ -90,30 +90,31 @@ function ClipRow({ ctx, clip, shots, sel, onSelect, onAnalyze }) {
 // stays sharp on large and high-DPI screens and stays fast on small ones.
 const PREVIEW_STEPS = [640, 960, 1280, 1600, 1920, 2560, 3200, 3840, 5120, 7680];
 
-function usePreviewWidth(clip) {
-  const [box, setBox] = useState([1280, 720]);   // the viewer's size in screen pixels
+function usePreviewFit(clip) {
+  // The viewer's size in CSS pixels. From it: the box the picture fills (exact aspect, never cropped) and the preview
+  // width to ask the server for (the screen pixels of that box, rounded up to a step, never more than the source).
+  const [box, setBox] = useState([1280, 720]);
   const ro = useRef(null);
   const ref = useCallback((el) => {
     if (ro.current) { ro.current.disconnect(); ro.current = null; }
     if (!el || typeof ResizeObserver === 'undefined') return;
-    ro.current = new ResizeObserver(() => {
-      const r = el.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      setBox([Math.round(r.width * dpr), Math.round(r.height * dpr)]);
-    });
+    ro.current = new ResizeObserver(() => setBox([el.clientWidth, el.clientHeight]));
     ro.current.observe(el);
   }, []);
-  if (!clip) return [ref, 1280];
+  if (!clip) return [ref, 1280, null];
   const info = clip.info;
-  const need = Math.min(box[0], box[1] * (info.display_width / Math.max(1, info.display_height)));
-  return [ref, Math.min(info.display_width, PREVIEW_STEPS.find((s) => s >= need) || PREVIEW_STEPS[PREVIEW_STEPS.length - 1])];
+  const aspect = info.display_width / Math.max(1, info.display_height);
+  const w = Math.max(16, Math.min(box[0], box[1] * aspect));
+  const fit = { width: `${Math.floor(w)}px`, height: `${Math.floor(w / aspect)}px` };
+  const need = w * (window.devicePixelRatio || 1);
+  return [ref, Math.min(info.display_width, PREVIEW_STEPS.find((s) => s >= need) || PREVIEW_STEPS[PREVIEW_STEPS.length - 1]), fit];
 }
 
-function Viewer({ clip, shot, t, before, after, version, reference, play, mode, feed, onFull }) {
+function Viewer({ clip, shot, t, before, after, version, reference, play, mode, feed, onFull, wrapRef, isFs, onFs }) {
   const [split, setSplit] = useState(0.5);
   const box = useRef(null);
   const drag = useRef(false);
-  const [sizeRef, previewW] = usePreviewWidth(clip);
+  const [sizeRef, previewW, fit] = usePreviewFit(clip);
   const move = (e) => {
     if (!drag.current || !box.current) return;
     const r = box.current.getBoundingClientRect();
@@ -125,7 +126,8 @@ function Viewer({ clip, shot, t, before, after, version, reference, play, mode, 
     window.addEventListener('pointermove', move);
     return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointermove', move); };
   }, []);
-  if (!clip) return html`<div class="viewer-wrap"><div class="empty" style="margin:auto">Add clips to begin. The app reads them in place. Nothing leaves this computer.</div></div>`;
+  const exitFs = isFs && html`<button class="small fs-exit" onClick=${onFs}>Exit full screen (Esc)</button>`;
+  if (!clip) return html`<div class="viewer-wrap" ref=${wrapRef}><div class="empty" style="margin:auto">Add clips to begin. The app reads them in place. Nothing leaves this computer.</div></div>`;
   const base = { clip: clip.id, t: t.toFixed(3), w: previewW, shot: shot ? shot.id : undefined, v: version };
   const urlA = '/api/frame?' + qs({ ...base, stage: before });
   const urlB = '/api/frame?' + qs({ ...base, stage: after });
@@ -133,13 +135,14 @@ function Viewer({ clip, shot, t, before, after, version, reference, play, mode, 
   if (mode && mode.kind === 'key') {
     const keyUrl = '/api/key?' + qs({ clip: clip.id, t: t.toFixed(3), w: Math.min(previewW, 1920), shot: shot ? shot.id : undefined, target: mode.target, index: mode.index, v: version });
     return html`
-      <div class="viewer-wrap">
-        <div class="viewer" ref=${sizeRef}><div class="stage">
+      <div class="viewer-wrap" ref=${wrapRef}>
+        <div class="viewer" ref=${sizeRef}><div class="stage" style=${fit}>
           <img src=${keyUrl} draggable=${false} />
           <div class="tag l">${mode.label}</div>
         </div></div>
         ${refBox}
         <${AssistantFeed} items=${feed} />
+        ${exitFs}
       </div>`;
   }
   const picking = mode && mode.kind === 'pick';
@@ -149,20 +152,21 @@ function Viewer({ clip, shot, t, before, after, version, reference, play, mode, 
   };
   if (play) {
     return html`
-      <div class="viewer-wrap">
-        <div class="viewer" ref=${sizeRef}><div class="stage">
+      <div class="viewer-wrap" ref=${wrapRef}>
+        <div class="viewer" ref=${sizeRef}><div class="stage" style=${fit}>
           <video src=${play.url} controls autoplay loop playsinline muted
             onLoadedMetadata=${(e) => { if (shot && shot.start > 0) e.target.currentTime = shot.start; }}></video>
           <div class="tag l">Graded playback, preview quality</div>
         </div></div>
         ${refBox}
         <${AssistantFeed} items=${feed} />
+        ${exitFs}
       </div>`;
   }
   return html`
-    <div class="viewer-wrap">
+    <div class="viewer-wrap" ref=${wrapRef}>
       <div class="viewer" ref=${sizeRef}>
-        <div class=${'stage' + (picking ? ' picking' : '')} ref=${box} title="Double-click: full-quality still"
+        <div class=${'stage' + (picking ? ' picking' : '')} ref=${box} style=${fit} title="Double-click: full-quality still"
           onDblClick=${() => { if (!picking && onFull) onFull(); }}
           onPointerDown=${(e) => { if (picking) { pickAt(e); return; } drag.current = true; move(e); }}>
           <img src=${urlA} draggable=${false} />
@@ -174,6 +178,7 @@ function Viewer({ clip, shot, t, before, after, version, reference, play, mode, 
       </div>
       ${refBox}
       <${AssistantFeed} items=${feed} />
+      ${exitFs}
     </div>`;
 }
 
@@ -238,7 +243,18 @@ export function ProjectPage({ ctx }) {
   const [viewerMode, setViewerMode] = useState(null);   // color picking or a secondary's key, from the Color tab
   const [colorTarget, setColorTarget] = useState('look'); // the Color tab edits the look or this shot's trim
   const [feed, setFeed] = useState([]);                   // the assistant's last steps, shown on the viewer
-  const [still, setStill] = useState(false);              // full-quality still, full screen
+  const [still, setStill] = useState(false);              // full-quality still
+  const wrapEl = useRef(null);                            // the viewer, for full screen
+  const [isFs, setIsFs] = useState(false);
+  useEffect(() => {
+    const on = () => setIsFs(!!document.fullscreenElement && document.fullscreenElement === wrapEl.current);
+    document.addEventListener('fullscreenchange', on);
+    return () => document.removeEventListener('fullscreenchange', on);
+  }, []);
+  const toggleFs = () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else if (wrapEl.current && wrapEl.current.requestFullscreen) wrapEl.current.requestFullscreen().catch(() => {});
+  };
   const stillRef = useRef(false); stillRef.current = still;
   const [watch, setWatch] = useState(() => { try { return localStorage.getItem('cg-watch') !== 'off'; } catch (e) { return true; } });
   const watchRef = useRef(watch); watchRef.current = watch;
@@ -371,14 +387,15 @@ export function ProjectPage({ ctx }) {
       </div>
       <div class="col center">
         <${Viewer} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} version=${version} reference=${proj.reference} play=${play} mode=${viewerMode} feed=${watch ? feed : []}
-          onFull=${() => setStill(true)} />
+          onFull=${() => setStill(true)} wrapRef=${wrapEl} isFs=${isFs} onFs=${toggleFs} />
         ${still && clip && html`<${StillView} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} names=${STAGE_NAMES} version=${version}
           onClose=${() => setStill(false)} />`}
         ${clip && html`<div class="transport">
           ${!clip.info.is_image && proj.graded ? (play
             ? html`<button class="small" onClick=${() => setPlay(null)}>Back to frames</button>`
             : html`<button class="small" title="Renders a small preview file of the whole clip with the grade, then plays it" onClick=${startPlay}>▶ Play graded</button>`) : ''}
-          <button class="small" title="This frame at full resolution with the full grade, full screen (F or double-click the picture)" onClick=${() => setStill(true)}>⛶ Full quality</button>
+          <button class="small" title="The viewer on the whole screen, with the before and after slider. Esc to leave." onClick=${toggleFs}>⛶ Full screen</button>
+          <button class="small" title="This frame at the source's full resolution with the full grade (F or double-click the picture)" onClick=${() => setStill(true)}>Full quality</button>
           <span class="mono">${fmtTime(t)}</span>
           <input type="range" min=${shot ? shot.start : 0} max=${shot ? Math.max(shot.start, shot.end - 0.04) : clip.info.duration} step="0.04" value=${t}
             onInput=${(e) => setT(parseFloat(e.target.value))} />

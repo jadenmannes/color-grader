@@ -57,12 +57,11 @@ export function StillView({ clip, shot, t, before, after, names, version, onClos
   }, [clip.id, shot && shot.id, t, before, after, version]);
   useEffect(() => () => setImgs((m) => { Object.values(m).forEach((u) => URL.revokeObjectURL(u)); return {}; }), []);
 
-  // full screen on open; Esc leaves full screen first (the browser does that), then closes
+  // full screen only on request (the button or F); Esc leaves full screen first (the browser does that), then closes
   useEffect(() => {
     const el = root.current;
     const onFs = () => setFs(document.fullscreenElement === el);
     document.addEventListener('fullscreenchange', onFs);
-    if (el && el.requestFullscreen) el.requestFullscreen().catch(() => {});
     return () => {
       document.removeEventListener('fullscreenchange', onFs);
       if (document.fullscreenElement === el && document.exitFullscreen) document.exitFullscreen().catch(() => {});

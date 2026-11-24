@@ -19,6 +19,22 @@ const assert = (cond, msg) => { if (!cond) { console.error('FAIL: ' + msg); proc
   const src = await page.getAttribute('.viewer .stage img.after', 'src');
   assert(/[?&]w=640(&|$)/.test(src), 'preview width follows the viewer, capped at the source: ' + src);
 
+  // the picture fits the viewer with the frame's own shape: never cropped, never stretched
+  const fit = await page.evaluate(() => {
+    const v = document.querySelector('.viewer').getBoundingClientRect();
+    const i = document.querySelector('.viewer .stage img').getBoundingClientRect();
+    return { vw: v.width, vh: v.height, iw: i.width, ih: i.height };
+  });
+  assert(fit.iw <= fit.vw + 0.5 && fit.ih <= fit.vh + 0.5, 'the picture fits the viewer: ' + JSON.stringify(fit));
+  assert(Math.abs(fit.iw / fit.ih - 16 / 9) < 0.01, 'the picture keeps 16:9: ' + JSON.stringify(fit));
+
+  // the Full screen button puts the viewer on the whole screen, with a way out
+  await page.click('button:has-text("Full screen")');
+  await page.waitForFunction(() => !!document.fullscreenElement);
+  await page.waitForSelector('.fs-exit');
+  await page.click('.fs-exit');
+  await page.waitForFunction(() => !document.fullscreenElement);
+
   // 1. the button opens the still at the source's full resolution
   await page.click('button:has-text("Full quality")');
   await page.waitForSelector('.still .still-pic img');
