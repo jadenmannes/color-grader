@@ -68,7 +68,7 @@ The app describes the reference in plain words and fits the shared look to its s
 A corrected picture is flat: blacks sit in gray, the top end stops short of white, noise shows. Three steps close the gap to a finished one.
 
 - **Punch** (Grade tab, default 70 percent): the finishing pass on tone. It sets the black point and opens the top end with the look's own contrast, lift, gamma and gain. A film-style curve then steepens the midtones and eases into black and white, so the picture gains depth with no new clipping. Color density (Sat vs Lum) makes strong colors a little darker and richer, the way film dye takes light away. The brightest skin stays under 76 percent, so faces keep shape and color.
-- **Noise reduction**: cleans the camera signal before the grade, at 16-bit precision, with the frames before and after. 8-bit log footage gains smooth gradients from it. The first build switches it on for log footage.
+- **Noise reduction**: cleans the camera signal before the grade, at 16-bit precision, with a wavelet filter that leaves no block pattern in fine detail such as leaves. 8-bit log footage gains smooth gradients from it. The first build switches it on for log footage.
 - **Clarity and sharpening**: wide and fine edge contrast on the finished luma. The first build sets both to a moderate level.
 
 The build never adds grain on its own. Grain stays a choice on the Grade tab. LUTs carry color only: noise reduction and sharpening live in the app's export and, as starting values, in the Resolve recipe.
@@ -162,7 +162,7 @@ A grade fails when it breaks one of these. The build repairs failures on its own
 - **Strength slider**: 0 to 100 percent. Recipe, LUTs and export follow it.
 - **Recipe tab**: project color settings, then node by node, every control with its exact value and one short reason. Copy it as text or download it. The large view fits a second screen.
 - **LUT set** (Export tab): the look for Resolve, the look with output conversion, the output conversion alone, and per camera profile an input LUT and an any-editor LUT. A text file in the folder says where each file goes. Size 17, 33 or 65 points (Settings).
-- **Graded clip** (Export tab): source resolution, 10-bit H.265 for 10-bit sources, tagged Rec.709 so QuickTime, phones and YouTube show the same picture. ProRes 422 HQ and DNxHR HQX are in the format list.
+- **Graded clip** (Export tab): source resolution, 10-bit H.265 by default, for 8-bit sources too: the grade and the noise reduction create more levels than 8-bit holds. Tagged Rec.709 so QuickTime, phones and YouTube show the same picture. ProRes 422 HQ and DNxHR HQX are in the format list. H.264 8-bit stays available for players without H.265: it sharpens at 16-bit and dithers once at the end, but shows more noise and steps in smooth skies than 10-bit.
 - **Saved looks**: save the current look with a name, apply it to other footage later.
 
 ## Grade with an AI assistant (MCP)

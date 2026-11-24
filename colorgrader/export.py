@@ -24,10 +24,10 @@ from .grade import model, pipeline
 F32 = np.float32
 
 FORMATS: dict[str, dict[str, Any]] = {
-    "auto": {"name": "Auto: H.265 10-bit for 10-bit sources, H.264 for 8-bit"},
+    "auto": {"name": "Auto: H.265 10-bit, best quality for every source"},
     "h265-10bit-mp4": {"name": "H.265 10-bit 4:2:0 (MP4)", "ext": ".mp4", "pix": "yuv420p10le",
                        "codec": ["-c:v", "libx265", "-preset", "medium", "-crf", "16", "-tag:v", "hvc1"], "x265": True},
-    "h264-8bit-mp4": {"name": "H.264 8-bit 4:2:0 (MP4)", "ext": ".mp4", "pix": "yuv420p",
+    "h264-8bit-mp4": {"name": "H.264 8-bit 4:2:0 (MP4), for players without H.265", "ext": ".mp4", "pix": "yuv420p",
                       "codec": ["-c:v", "libx264", "-preset", "medium", "-crf", "16", "-profile:v", "high"]},
     "prores-422hq-mov": {"name": "ProRes 422 HQ 10-bit (MOV)", "ext": ".mov", "pix": "yuv422p10le",
                          "codec": ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0"]},
@@ -327,7 +327,9 @@ def grain_source_stats(sigma: float) -> tuple[int, float]:
 
 def _resolve_format(fmt: str, info: dict[str, Any]) -> dict[str, Any]:
     if fmt not in FORMATS or fmt == "auto":
-        fmt = "h265-10bit-mp4" if info["bit_depth"] > 8 else "h264-8bit-mp4"
+        # 10-bit for 8-bit sources too: the grade stretches the log signal and noise reduction fills in new levels.
+        # 8-bit H.264 threw them away (measured on 8-bit S-Log3 fog: twice the noise of 10-bit and visible steps).
+        fmt = "h265-10bit-mp4"
     return dict(FORMATS[fmt], id=fmt)
 
 
@@ -472,11 +474,18 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     if lut_b is not None:
         tail.append(f"lut3d=file='{_ff_path(lut_b)}':interp=tetrahedral")
     trc = W.OUTPUT_SPACES[st["output_space"]]["trc_tag"]
-    if use_z:
-        undo = "transferin=linear:transfer=bt470m:primariesin=709:primaries=709:" if enc == "z22" else ""  # exact power 1/2.2
-        tail.append(f"zscale={undo}matrix=709:range=limited:dither=error_diffusion,format={f['pix']}")
-    else:
-        tail.append(f"scale=out_color_matrix=bt709:out_range=tv:sws_dither=ed:flags=accurate_rnd+full_chroma_int,format={f['pix']}")
+    def to_yuv(pix: str, dither: bool) -> str:
+        if use_z:
+            undo = "transferin=linear:transfer=bt470m:primariesin=709:primaries=709:" if enc == "z22" else ""  # exact power 1/2.2
+            return f"zscale={undo}matrix=709:range=limited{':dither=error_diffusion' if dither else ''},format={pix}"
+        return f"scale=out_color_matrix=bt709:out_range=tv{':sws_dither=ed' if dither else ''}:flags=accurate_rnd+full_chroma_int,format={pix}"
+
+    def deliver(pix: str) -> str:
+        """16-bit 4:4:4 to the delivery format, dithered once, at the very end."""
+        if use_z:
+            return f"zscale=matrixin=709:matrix=709:rangein=limited:range=limited:dither=error_diffusion,format={pix}"
+        return f"scale=in_range=tv:out_range=tv:sws_dither=ed:flags=accurate_rnd+full_chroma_int,format={pix}"
+
     params = f"setparams=color_primaries=bt709:color_trc={trc}:colorspace=bt709:range=tv"
     steps = []
     s_sharp, s_clar = pipeline.detail_sigmas(w)
@@ -487,15 +496,18 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     if steps and has_filter("gblur"):
         # Unsharp masks on the finished luma: Y + k * (Y - blur). grainextract gives Y - blur + half,
         # grainmerge at opacity k adds k * (difference). Chroma passes through untouched.
+        # They work on 16-bit 4:4:4: sharpening after the 8-bit conversion amplified its steps and its dither
+        # noise (measured on 8-bit S-Log3 fog: nine times the noise of the full-quality still).
+        tail.append(to_yuv("yuv444p16le", False))
         graph += f";[{last}]{','.join(tail)}[d0]"
         for i, (sigma, k) in enumerate(steps):
             a, b_, c, blur, diff, nxt = (f"d{i}{t}" for t in ("a", "b", "c", "blur", "diff", "n"))
             graph += (f";[d{i}]split=3[{a}][{b_}][{c}];[{b_}]gblur=sigma={sigma:.3f}:steps=2:planes=1[{blur}];"
                       f"[{a}][{blur}]blend=c0_mode=grainextract:c1_mode=normal:c2_mode=normal[{diff}];"
                       f"[{c}][{diff}]blend=c0_mode=grainmerge:c0_opacity={min(k, 1.0):.4f}:c1_mode=normal:c2_mode=normal[d{i + 1}]")
-        graph += f";[d{len(steps)}]{params}[out]"
+        graph += f";[d{len(steps)}]{deliver(f['pix'])},{params}[out]"
     else:
-        tail.append(params)
+        tail += [to_yuv(f["pix"], True), params]
         graph += f";[{last}]{','.join(tail)}[out]"
     cmd = [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", *inputs, "-filter_complex", graph, "-map", "[out]"]
     codec = list(f["codec"])

@@ -97,3 +97,37 @@ def test_noise_reduction_leaves_no_block_grid_in_foliage(proj, workdir):
         assert _block_edges(clean, period) < 1.05, (period, _block_edges(clean, period))
     fine = lambda im: float(np.abs(np.diff(im @ np.array([0.2126, 0.7152, 0.0722], np.float32), axis=1)).mean())
     assert fine(clean) < 0.97 * fine(raw)                                        # noise went down
+
+
+def test_export_keeps_smooth_skies_like_the_still(proj, workdir, tmp_path):
+    """8-bit S-Log3 fog: the export used to sharpen after its 8-bit conversion, with nine times the still's noise.
+    The default export is 10-bit and sharpens at 16-bit: its sky stays as clean as the full-quality still."""
+    from colorgrader import export, media
+
+    from helpers import slog3_clip
+
+    w, h = 960, 540
+    r = np.random.default_rng(5)
+    ramp = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
+    sky = (0.55 - 0.25 * ramp) * np.array([0.93, 0.97, 1.0], np.float32) * np.ones((h, w, 3), np.float32)
+    sky *= 1 + 0.02 * r.standard_normal((h, w, 1)).astype(np.float32)
+    clip = load_clip(proj, slog3_clip(workdir / "fog8.mp4", scenes=[sky.clip(0, 1)], frames_each=4, size=(w, h), bit_depth=8, chroma="420",
+                                      crf=17, tags={"make": "SONY", "model": "ILCE-7CM2"}), ("sony-a7c-ii", "s-log3-s-gamut3-cine"))
+    auto.build(proj, refit=False)
+    shot = proj.shots_of(clip["id"])[0]
+    proj.adjust_controls({"saturation": 65, "contrast": 1.15})
+    proj.set_finish({"detail": {"denoise": 45, "sharpen": 20, "clarity": 8}})
+    t = 0.08
+    still = np.clip(proj.render_still(clip["id"], t, "graded", shot["id"]), 0, 1)
+
+    def sky_noise(img):
+        y = img[60:480, 40:920] @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+        return float((y - cv2.GaussianBlur(y, (0, 0), 4)).std())
+
+    res = export.render_clip(proj, clip["id"], tmp_path / "fog.mp4", "auto")
+    info = media.probe(res["path"])
+    assert res["format"] == "h265-10bit-mp4" and info["bit_depth"] == 10
+    buf, bw, bh = media.read_frame(info, t, w, "", True)
+    got = np.clip(media.raw_to_rgb(buf, bw, bh, info), 0, 1)
+    assert sky_noise(got) < 2.0 * sky_noise(still) + 0.0002, (sky_noise(got), sky_noise(still))
+    assert float(np.abs(got - still).mean()) < 0.006

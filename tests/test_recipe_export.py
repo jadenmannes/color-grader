@@ -335,11 +335,13 @@ def test_export_adds_vignette_and_grain_like_the_preview(proj, workdir, tmp_path
     assert np.std(grain - plain) > 0.004
 
 
-def test_eight_bit_source_exports_eight_bit_and_playback_renders(proj, workdir, tmp_path):
+def test_eight_bit_source_exports_ten_bit_and_playback_renders(proj, workdir, tmp_path):
     film = load_clip(proj, filmsim_clip(workdir / "rx_film8.mov"), ("fujifilm-x-m5", "film-simulation"))
     auto.build(proj)
     res = export.render_clip(proj, film["id"], tmp_path / "film.mp4", "auto")
-    assert res["format"] == "h264-8bit-mp4" and media.probe(res["path"])["bit_depth"] == 8
+    assert res["format"] == "h265-10bit-mp4" and media.probe(res["path"])["bit_depth"] == 10   # the grade needs the levels
+    res8 = export.render_clip(proj, film["id"], tmp_path / "film8.mp4", "h264-8bit-mp4")
+    assert media.probe(res8["path"])["bit_depth"] == 8
     assert not export.preview_ready(proj, film["id"])
     export.build_preview(proj, film["id"])
     assert export.preview_ready(proj, film["id"])
