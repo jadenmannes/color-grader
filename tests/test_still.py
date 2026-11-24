@@ -64,3 +64,36 @@ def test_interface_files_stay_fresh_after_an_update(client):
     assert client.get("/").headers["cache-control"] == "no-store"
     v = client.get("/api/version").json()
     assert v["version"] and "commit" in v
+
+
+def _block_edges(img, period):
+    """How much stronger brightness jumps are at block borders than inside blocks. 1.0: no grid."""
+    y = img @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+    d = np.abs(np.diff(y, axis=1))
+    return float(d[:, period - 1::period].mean() / np.delete(d, np.s_[period - 1::period], axis=1).mean())
+
+
+def test_noise_reduction_leaves_no_block_grid_in_foliage(proj, workdir):
+    """A block-based denoiser left a 16-pixel grid in graded leaves of 8-bit log footage. The noise reduction now
+    keeps fine foliage free of any grid, and still removes noise."""
+    from helpers import slog3_clip
+
+    w, h = 960, 540
+    r = np.random.default_rng(1)
+    base = sum(a * cv2.GaussianBlur(r.standard_normal((h, w)).astype(np.float32), (0, 0), s) for s, a in ((1.2, 1.0), (3, 0.8), (8, 0.6)))
+    base = (base - base.min()) / (base.max() - base.min())
+    leaves = (np.array([0.6, 0.22, 0.04], np.float32) * (0.15 + 0.85 * base[..., None])).astype(np.float32)
+    leaves *= 1 + 0.05 * r.standard_normal((h, w, 1)).astype(np.float32)        # sensor noise
+    clip = load_clip(proj, slog3_clip(workdir / "leaves8.mp4", scenes=[leaves.clip(0, 1)], frames_each=4, size=(w, h), bit_depth=8,
+                                      chroma="420", crf=17, tags={"make": "SONY", "model": "ILCE-7CM2"}), ("sony-a7c-ii", "s-log3-s-gamut3-cine"))
+    auto.build(proj, refit=False)
+    shot = proj.shots_of(clip["id"])[0]
+    proj.adjust_controls({"saturation": 70, "color_boost": 0.4, "contrast": 1.15})
+    proj.set_finish({"detail": {"denoise": 0, "sharpen": 0, "clarity": 0}})
+    raw = np.clip(proj.render_still(clip["id"], 0.04, "graded", shot["id"]), 0, 1)
+    proj.set_finish({"detail": {"denoise": 35, "sharpen": 0, "clarity": 0}})
+    clean = np.clip(proj.render_still(clip["id"], 0.04, "graded", shot["id"]), 0, 1)
+    for period in (8, 16, 32):
+        assert _block_edges(clean, period) < 1.05, (period, _block_edges(clean, period))
+    fine = lambda im: float(np.abs(np.diff(im @ np.array([0.2126, 0.7152, 0.0722], np.float32), axis=1)).mean())
+    assert fine(clean) < 0.97 * fine(raw)                                        # noise went down
