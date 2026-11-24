@@ -134,6 +134,11 @@ async function playControl(c, T) {
 
 async function playOne(ev, ui, backlog) {
   ensure();
+  if (ui.covered && ui.covered()) {        // the full-quality still covers the panels: list the step, update the picture
+    ui.feed(ev);
+    await ui.refresh();
+    return;
+  }
   clearTimeout(hideTimer);
   cursor.classList.add('on');
   const T = backlog > 2 ? 0.4 : 1;          // falling behind the assistant: shorter moves

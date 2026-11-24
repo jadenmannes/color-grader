@@ -150,7 +150,8 @@ A grade fails when it breaks one of these. The build repairs failures on its own
 
 ## What you get
 
-- **Viewer**: before and after with a drag slider, next to the reference. Play graded renders a small preview file and plays the clip with the full grade.
+- **Viewer**: before and after with a drag slider, next to the reference. The preview renders at the size your screen shows it, sharp on large and high-DPI screens. Play graded renders a small preview file and plays the clip with the full grade.
+- **Full quality** (button under the viewer, F, or double-click the picture): the frame on screen at the source's full resolution with the full grade, lossless, full screen. Graded, source, or a split compare. Fit or 100% (one frame pixel per screen pixel) to judge noise, grain and sharpness. Save PNG writes a 16-bit file. A 4K frame takes a few seconds: large frames render on several cores at once.
 - **Scopes**: waveform, RGB parade, vectorscope with skin tone line, histogram, for before, after and reference side by side.
 - **Color tab**: every control above, live. Color wheels with a level slider and R, G, B fields, curve editors (click to add a point, drag, double-click to remove), HDR zones, the RGB mixer, and secondaries. A secondary starts from a preset (sky, skin, foliage, autumn leaves) or from a color you click in the viewer, and Show key turns the viewer into Resolve's Highlight view. Switch between the look and This shot only. Double-click a control's name to reset it.
 - **Strength slider**: 0 to 100 percent. Recipe, LUTs and export follow it.
@@ -246,7 +247,8 @@ uv run pytest
 - `tests/test_suggest.py` covers the look suggestions: three different looks, each inside the quality rules, chosen by the footage.
 - `tests/test_controls.py` checks every color control: neutral changes nothing, each control moves only what it should, strength and rounding hold, and the API takes partial edits and rejects bad input.
 - `tests/test_mcp.py` drives the MCP server over stdin and stdout against a running app: every control, shot trims, secondaries with a picked color, the key view and undo.
-- `tests/e2e/run.sh` drives the real add-camera form, the Color tab and the assistant cursor in a headless browser.
+- `tests/test_still.py` checks the full-quality still (full resolution, 16-bit save), shows strip rendering equals whole-frame rendering bit for bit, and checks the fast wide blur against a true Gaussian.
+- `tests/e2e/run.sh` drives the real add-camera form, the Color tab, the assistant cursor and the full-quality still in a headless browser.
 
 ## Layout
 

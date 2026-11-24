@@ -211,7 +211,7 @@ function GradeTab({ ctx, shot, onLive }) {
             <input type="range" min="0" max="100" step="5" value=${(fin.detail || {})[key] || 0}
               onChange=${(e) => setFinish({ detail: { [key]: parseInt(e.target.value, 10) } })} />
             <span class="mono" style="width:44px">${(fin.detail || {})[key] || 0}</span></div>`)}
-        <div class="dim" style="margin:2px 0 6px 22px">Judge noise and sharpness at full size: Play graded or the export. The viewer scales the picture down.</div>
+        <div class="dim" style="margin:2px 0 6px 22px">Judge noise and sharpness at full size: press F or Full quality under the viewer, then 100%.</div>
         <div class="row" title="Darkens the background around tracked faces and shoulders. The speaker stays lit."><input type="checkbox" checked=${(fin.relight || {}).enabled} onChange=${(e) => setFinish({ relight: { enabled: e.target.checked } })} />
           <span style="width:70px">Relight</span>
           <input type="range" min="0.1" max="1.5" step="0.05" value=${(fin.relight || {}).amount || 0.6} onChange=${(e) => setFinish({ relight: { amount: parseFloat(e.target.value) } })} />

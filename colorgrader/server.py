@@ -316,8 +316,37 @@ def _frame(clip: str, t: float, stage: str, w: int, shot: str | None) -> np.ndar
 
 
 @app.get("/api/frame")
-def frame(clip: str, t: float = 0.0, stage: str = "converted", w: int = Query(1280, ge=64, le=3840), shot: str | None = None) -> Response:
-    return Response(pipeline.to_jpeg(_frame(clip, t, stage, w, shot)), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+def frame(clip: str, t: float = 0.0, stage: str = "converted", w: int = Query(1280, ge=64, le=7680), shot: str | None = None) -> Response:
+    return Response(pipeline.to_jpeg(_frame(clip, t, stage, w, shot), 94), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/still")
+def still(clip: str, t: float = 0.0, stage: str = "graded", shot: str | None = None, download: bool = False) -> Response:
+    """One frame at the source's full resolution with the full grade, as a lossless PNG. download: a 16-bit file."""
+    if stage not in ("source", "converted", "balanced", "graded"):
+        raise HTTPException(400, "stage: source, converted, balanced or graded")
+    p = project.get()
+    try:
+        c = p.clip(clip)
+        if shot is None and stage in ("balanced", "graded"):
+            s = p.shot_at(clip, t)
+            shot = s["id"] if s else None
+        img = p.render_still(clip, t, stage, shot)
+    except (project.ProjectError, media.MediaError, KeyError) as exc:
+        raise _err(exc)
+    h, w = img.shape[:2]
+    headers = {"Cache-Control": "no-store", "X-Still-Size": f"{w}x{h}", "Access-Control-Expose-Headers": "X-Still-Size"}
+    if download:
+        stem = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in Path(c["name"]).stem)[:60] or "frame"
+        label = ""
+        if shot:
+            try:
+                label = f"_shot{p.shot(shot)['index'] + 1}"
+            except (project.ProjectError, KeyError):
+                label = ""
+        headers["Content-Disposition"] = f'attachment; filename="{stem}{label}_{t:.2f}s_{stage}.png"'
+        return Response(pipeline.to_png(img, 16, compression=1), media_type="image/png", headers=headers)
+    return Response(pipeline.to_png(img, 8, compression=0), media_type="image/png", headers=headers)
 
 
 @app.get("/api/scope")

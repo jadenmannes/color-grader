@@ -410,22 +410,39 @@ class Project:
         return data
 
     # ------------------------------------------------------------- frames
-    def frame_signal(self, clip: dict[str, Any], t: float, width: int, prefilter: str = "") -> tuple[np.ndarray, int, int]:
-        key = (clip["id"], round(float(t), 3), int(width), prefilter)
+    FRAME_CACHE_BYTES = 320 * 1024 * 1024   # decoded frames kept for the viewer: about six 4K frames or many previews
+
+    def frame_signal(self, clip: dict[str, Any], t: float, width: int, prefilter: str = "", hq: bool = False) -> tuple[np.ndarray, int, int]:
+        key = (clip["id"], round(float(t), 3), int(width), prefilter, hq)
         with self.lock:
             if key in self._frame_cache:
                 self._frame_cache.move_to_end(key)
                 return self._frame_cache[key]
-        val = media.read_frame(clip["info"], t, max_width=width, prefilter=prefilter)
+        val = media.read_frame(clip["info"], t, max_width=width, prefilter=prefilter, hq=hq)
         with self.lock:
             self._frame_cache[key] = val
-            while len(self._frame_cache) > 16:
-                self._frame_cache.popitem(last=False)
+            total = sum(v[0].nbytes for v in self._frame_cache.values())
+            while len(self._frame_cache) > 1 and (total > self.FRAME_CACHE_BYTES or len(self._frame_cache) > 48):
+                _, old = self._frame_cache.popitem(last=False)
+                total -= old[0].nbytes
         return val
+
+    def render_still(self, clip_id: str, t: float, stage: str = "graded", shot_id: str | None = None) -> np.ndarray:
+        """One frame at the source's full resolution with the full grade: the best picture the app makes of a moment.
+        Same steps as the viewer and the export, with the best scaler and exact chroma. The last still stays in memory,
+        so saving the frame you look at costs no second render."""
+        info = self.clip(clip_id)["info"]
+        key = (clip_id, round(float(t), 3), stage, shot_id, int(self.state.get("stamp", 0)), self.state.get("strength"))
+        cached = getattr(self, "_still", None)
+        if cached and cached[0] == key:
+            return cached[1]
+        img = self.render_frame(clip_id, t, stage, int(info["display_width"]), shot_id, hq=True)
+        self._still = (key, img)
+        return img
 
     def render_frame(self, clip_id: str, t: float, stage: str = "graded", width: int | None = None,
                      shot_id: str | None = None, look: dict[str, Any] | None = None,
-                     finish_override: dict[str, Any] | None = None) -> np.ndarray:
+                     finish_override: dict[str, Any] | None = None, hq: bool = False) -> np.ndarray:
         """Display R'G'B' of one frame at a stage: source, converted, balanced, graded."""
         clip = self.clip(clip_id)
         info = clip["info"]
@@ -440,7 +457,7 @@ class Project:
             prefilter = export.denoise_chain(dn, info["display_width"], info) if dn > 0 else ""
             if prefilter:
                 finish["detail"]["denoise"] = 0
-        buf, w, h = self.frame_signal(clip, t, width, prefilter)
+        buf, w, h = self.frame_signal(clip, t, width, prefilter, hq)
         idt, prof = self.idt(clip) if stage != "source" or clip.get("profile_id") else (None, {})
         if stage == "source":
             fr = idt.full_range if idt is not None else None

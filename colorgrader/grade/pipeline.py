@@ -13,6 +13,9 @@ Steps 3 to 6 use the operators in color/ops.py, which follow Resolve's math.
 """
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -96,37 +99,46 @@ def look_stage(di: np.ndarray, look: dict[str, Any]) -> np.ndarray:
     return controls.apply(di, look)
 
 
+@lru_cache(maxsize=4)
 def vignette_mask(height: int, width: int, start: float) -> np.ndarray:
-    """0 in the center, 1 in the corners, smooth in between."""
+    """0 in the center, 1 in the corners, smooth in between. Cached and read-only: strips of a large frame share it."""
     y = (np.arange(height, dtype=F32) + 0.5) / height * 2.0 - 1.0
     x = (np.arange(width, dtype=F32) + 0.5) / width * 2.0 - 1.0
     rr = np.sqrt((x[None, :] ** 2 + y[:, None] ** 2) / 2.0)
     t = np.clip((rr - start) / max(1e-3, 1.0 - start), 0.0, 1.0)
-    return (t * t * (3.0 - 2.0 * t)).astype(F32)
+    out = (t * t * (3.0 - 2.0 * t)).astype(F32)
+    out.setflags(write=False)
+    return out
 
 
+@lru_cache(maxsize=2)
 def grain_field(height: int, width: int, size: float, seed: int = 11) -> np.ndarray:
-    """Zero-mean monochrome grain with unit standard deviation."""
+    """Zero-mean monochrome grain with unit standard deviation. Cached: every strip of a large frame shares one field."""
     import cv2
 
     rng = np.random.default_rng(seed)
     g = rng.standard_normal((height, width)).astype(F32)
     sigma = 0.55 * max(0.3, size) * max(1.0, width / 1920.0)
     g = cv2.GaussianBlur(g, (0, 0), sigma)
-    return g / max(float(g.std()), 1e-6)
+    out = (g / max(float(g.std()), 1e-6)).astype(F32)
+    out.setflags(write=False)
+    return out
 
 
-def finish_stage(di: np.ndarray, finish: dict[str, Any], seed: int = 11) -> np.ndarray:
-    """Step 7 on a full frame (H, W, 3) in DaVinci Intermediate."""
+def finish_stage(di: np.ndarray, finish: dict[str, Any], seed: int = 11, frame: tuple[int, int, int] | None = None) -> np.ndarray:
+    """Step 7 in DaVinci Intermediate on a full frame (H, W, 3), or on rows y0.. of a frame when frame = (H, W, y0)."""
     if di.ndim != 3:
         return di
     h, w = di.shape[:2]
+    fh, fw, y0 = frame or (h, w, 0)
     v = finish.get("vignette") or {}
     if v.get("enabled") and v.get("amount", 0) > 0:
-        di = di - (vignette_mask(h, w, float(v.get("start", 0.45))) * F32(float(v["amount"]) * W.STOP))[..., None]
+        mask = vignette_mask(fh, fw, float(v.get("start", 0.45)))[y0:y0 + h]
+        di = di - (mask * F32(float(v["amount"]) * W.STOP))[..., None]
     g = finish.get("grain") or {}
     if g.get("enabled") and g.get("amount", 0) > 0:
-        di = di + (grain_field(h, w, float(g.get("size", 1.0)), seed) * F32(float(g["amount"]) / 100.0))[..., None]
+        field = grain_field(fh, fw, float(g.get("size", 1.0)), seed)[y0:y0 + h]
+        di = di + (field * F32(float(g["amount"]) / 100.0))[..., None]
     return di
 
 
@@ -168,6 +180,21 @@ def denoise_signal(sig: np.ndarray, amount: float) -> np.ndarray:
     return (y2[..., None] + chroma).astype(F32)
 
 
+def wide_blur(img: np.ndarray, sigma: float) -> np.ndarray:
+    """Gaussian blur. A wide one runs on a smaller copy and scales back: the result is smooth either way, and a 4K
+    clarity blur drops from seconds to milliseconds."""
+    import cv2
+
+    k = int(sigma // 6)
+    h, w = img.shape[:2]
+    if k < 2 or min(h, w) < 16 * k:
+        return cv2.GaussianBlur(img, (0, 0), sigma)
+    small = cv2.resize(img, (max(1, round(w / k)), max(1, round(h / k))), interpolation=cv2.INTER_AREA)
+    # the box average of the downscale already spreads by (k^2 - 1) / 12 pixels squared
+    small = cv2.GaussianBlur(small, (0, 0), max(0.5, (max(sigma * sigma - (k * k - 1) / 12.0, 1.0)) ** 0.5 / k))
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
 def detail_display(disp: np.ndarray, sharpen: float, clarity: float) -> np.ndarray:
     """Clarity (wide local contrast) and sharpening on the display luma of a full frame. Colors keep their chroma."""
     if disp.ndim != 3 or (sharpen <= 0 and clarity <= 0):
@@ -178,25 +205,29 @@ def detail_display(disp: np.ndarray, sharpen: float, clarity: float) -> np.ndarr
     y = np.ascontiguousarray(np.clip(disp, 0.0, 1.0) @ _LUMA709)
     out = y
     if clarity > 0:
-        out = out + F32(clarity_gain(clarity)) * (out - cv2.GaussianBlur(out, (0, 0), s_clar))
+        out = out + F32(clarity_gain(clarity)) * (out - wide_blur(out, s_clar))
         out = np.clip(out, 0.0, 1.0)
     if sharpen > 0:
         out = out + F32(sharpen_gain(sharpen)) * (out - cv2.GaussianBlur(out, (0, 0), s_sharp))
     return (disp + (out - y)[..., None]).astype(F32)
 
 
-def render(signal_rgb: np.ndarray, idt: InputTransform, odt: OutputTransform, corrections: dict[str, Any] | None,
-           shot: dict[str, Any] | None = None, look: dict[str, Any] | None = None, finish: dict[str, Any] | None = None,
-           stage: str = "graded", relight_mask: np.ndarray | None = None) -> np.ndarray:
-    """Render display R'G'B' at a named stage: converted, balanced, graded."""
-    dn, sharp, clar = detail_values(finish if (stage == "graded" and shot is not None and look is not None) else None)
-    if dn > 0:
-        signal_rgb = denoise_signal(signal_rgb, dn)
-    lin = camera_stage(signal_rgb, idt, corrections)
+STRIP_PIXELS = 1_500_000   # frames above this size render in strips on several cores
+STRIP_ROWS_PIXELS = 400_000
+
+
+def render_threads() -> int:
+    return max(1, min(6, (os.cpu_count() or 2) - 1))
+
+
+def _color(sig: np.ndarray, idt: InputTransform, odt: OutputTransform, corrections: dict[str, Any] | None,
+           shot: dict[str, Any] | None, look: dict[str, Any] | None, finish: dict[str, Any] | None, stage: str,
+           relight_mask: np.ndarray | None, frame: tuple[int, int, int] | None) -> np.ndarray:
+    """Every per-pixel step, from the camera signal to display R'G'B'. Runs on a whole frame or on a strip of rows."""
+    lin = camera_stage(sig, idt, corrections)
     cam_sat = camera_saturation(corrections)
     if stage == "converted" or shot is None:
-        di = ops.saturation(W.di_encode(lin), cam_sat)
-        return odt(di)
+        return odt(ops.saturation(W.di_encode(lin), cam_sat))
     di = shot_stage(lin, shot, cam_sat)
     if stage == "balanced" or look is None:
         return odt(di)
@@ -204,14 +235,63 @@ def render(signal_rgb: np.ndarray, idt: InputTransform, odt: OutputTransform, co
     if finish:
         on, amount, subject = relight.settings(finish)
         if on and relight_mask is not None and di.ndim == 3:
-            m = relight_mask
-            if m.shape != di.shape[:2]:
-                import cv2
+            di = relight.apply(di, relight_mask, amount, subject)
+        di = finish_stage(di, finish, frame=frame)
+    return odt(di)
 
-                m = cv2.resize(m, (di.shape[1], di.shape[0]), interpolation=cv2.INTER_LINEAR)
-            di = relight.apply(di, m, amount, subject)
-        di = finish_stage(di, finish)
-    return detail_display(odt(di), sharp, clar)
+
+def render(signal_rgb: np.ndarray, idt: InputTransform, odt: OutputTransform, corrections: dict[str, Any] | None,
+           shot: dict[str, Any] | None = None, look: dict[str, Any] | None = None, finish: dict[str, Any] | None = None,
+           stage: str = "graded", relight_mask: np.ndarray | None = None) -> np.ndarray:
+    """Render display R'G'B' at a named stage: converted, balanced, graded.
+
+    A large frame renders in strips of rows on several cores. Every color step works per pixel, so the strips give
+    exactly the whole-frame result. Noise reduction, sharpening and clarity look at neighbors: they run on the full frame.
+    """
+    dn, sharp, clar = detail_values(finish if (stage == "graded" and shot is not None and look is not None) else None)
+    if dn > 0:
+        signal_rgb = denoise_signal(signal_rgb, dn)
+    if signal_rgb.ndim == 3 and relight_mask is not None and relight_mask.shape != signal_rgb.shape[:2]:
+        import cv2
+
+        relight_mask = cv2.resize(relight_mask, (signal_rgb.shape[1], signal_rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
+    args = (idt, odt, corrections, shot, look, finish, stage)
+    if signal_rgb.ndim != 3 or signal_rgb.shape[0] * signal_rgb.shape[1] <= STRIP_PIXELS or render_threads() < 2:
+        disp = _color(signal_rgb, *args, relight_mask, None)
+    else:
+        h, w = signal_rgb.shape[:2]
+        rows = max(16, STRIP_ROWS_PIXELS // w)
+        disp = np.empty((h, w, 3), dtype=F32)
+        if finish and stage == "graded":   # build the shared full-frame fields once, before the strips ask for them
+            g = finish.get("grain") or {}
+            if g.get("enabled") and g.get("amount", 0) > 0:
+                grain_field(h, w, float(g.get("size", 1.0)), 11)
+
+        def strip(y0: int) -> None:
+            y1 = min(h, y0 + rows)
+            m = relight_mask[y0:y1] if relight_mask is not None else None
+            disp[y0:y1] = _color(signal_rgb[y0:y1], *args, m, (h, w, y0))
+
+        with ThreadPoolExecutor(render_threads()) as pool:
+            list(pool.map(strip, range(0, h, rows)))
+    return detail_display(disp, sharp, clar)
+
+
+def to_png(display_rgb: np.ndarray, bits: int = 8, seed: int = 1, compression: int = 1) -> bytes:
+    """Display R'G'B' float -> lossless PNG. 8-bit is dithered like the JPEG view, 16-bit keeps the full precision.
+    compression 0 encodes fastest (for the screen), 1 makes a smaller file (for saving)."""
+    import cv2
+
+    rgb = np.clip(display_rgb, 0.0, 1.0)
+    if bits == 16:
+        img = np.round(rgb * 65535.0).astype(np.uint16)
+    else:
+        noise = np.random.default_rng(seed).random(rgb.shape[:2], dtype=np.float32)[..., None] - 0.5
+        img = np.clip(np.round(rgb * 255.0 + noise * 0.9), 0, 255).astype(np.uint8)
+    ok, buf = cv2.imencode(".png", np.ascontiguousarray(img[..., ::-1]), [cv2.IMWRITE_PNG_COMPRESSION, int(compression)])
+    if not ok:
+        raise RuntimeError("PNG encode failed")
+    return buf.tobytes()
 
 
 def to_jpeg(display_rgb: np.ndarray, quality: int = 92, seed: int = 1) -> bytes:

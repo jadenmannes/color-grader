@@ -297,23 +297,25 @@ def out_pix_fmt(info: dict[str, Any]) -> str:
     return "gbrp16le" if info["is_rgb"] else "yuv444p16le"
 
 
-def read_frame(info: dict[str, Any], t: float, max_width: int = 1280, prefilter: str = "") -> tuple[np.ndarray, int, int]:
+def read_frame(info: dict[str, Any], t: float, max_width: int = 1280, prefilter: str = "", hq: bool = False) -> tuple[np.ndarray, int, int]:
     """Decode one frame near time t. Returns raw uint16 planes (3, H, W) flattened, width, height.
 
     prefilter: an ffmpeg filter chain that runs on the source frames before scaling (noise reduction).
+    hq: the best scaler with exact rounding and full chroma interpolation, for full-quality stills.
     """
     w, h = fit_size(info, max_width=max_width)
     cmd = [find_binary("ffmpeg"), "-v", "error", "-nostdin"]
     if not info["is_image"] and t > 0:
         cmd += ["-ss", f"{max(0.0, t):.4f}"]
+    flags = "lanczos+accurate_rnd+full_chroma_int" if hq else "bicubic"
     cmd += ["-i", info["path"], "-frames:v", "1", "-an", "-sn",
-            "-vf", (prefilter + "," if prefilter else "") + _scale_filter(w, h, "bicubic"),
+            "-vf", (prefilter + "," if prefilter else "") + _scale_filter(w, h, flags),
             "-f", "rawvideo", "-pix_fmt", out_pix_fmt(info), "pipe:1"]
     r = run(cmd)
     need = w * h * 3 * 2
     if r.returncode != 0 or len(r.stdout) < need:
         if not info["is_image"] and t > 0.5:  # past the end: step back
-            return read_frame(info, max(0.0, t - 0.5), max_width, prefilter)
+            return read_frame(info, max(0.0, t - 0.5), max_width, prefilter, hq)
         raise MediaError(f"Could not decode a frame from {info['name']}: {r.stderr.decode(errors='replace')[:300]}")
     return np.frombuffer(r.stdout[:need], dtype="<u2").copy(), w, h
 

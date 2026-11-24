@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Browser tests: the add-camera form, the Color tab and the assistant cursor. Needs Node with Playwright and a Chromium.
+# Browser tests: the add-camera form, the Color tab, the assistant cursor and the full-quality still. Needs Node with Playwright and a Chromium.
 #   tests/e2e/run.sh [screenshot_dir]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -44,3 +44,4 @@ auto.build(project.get(), refit=False)
 serve "$HOME2" 8798
 node "$ROOT/tests/e2e/color_panel.js" "http://127.0.0.1:8798/" "${1:-}"
 node "$ROOT/tests/e2e/assistant_cursor.js" "http://127.0.0.1:8798/" "${1:-}"
+node "$ROOT/tests/e2e/still_view.js" "http://127.0.0.1:8798/" "${1:-}"
