@@ -808,12 +808,46 @@ def apply_suggestion(sid: str) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ static
+def _commit() -> str | None:
+    """The git commit the app runs, read from the .git folder (no git command needed)."""
+    git = Path(__file__).resolve().parent.parent / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return head[:7] or None
+        ref = head[5:]
+        if (git / ref).exists():
+            return (git / ref).read_text(encoding="utf-8").strip()[:7] or None
+        for line in (git / "packed-refs").read_text(encoding="utf-8").splitlines():
+            if line.endswith(" " + ref):
+                return line.split()[0][:7]
+    except OSError:
+        return None
+    return None
+
+
+@app.get("/api/version")
+def version() -> dict[str, Any]:
+    """The app version and git commit, shown in the top bar: tells which update runs."""
+    return {"version": __version__, "commit": _commit()}
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(paths.WEB_DIR / "index.html", headers={"Cache-Control": "no-store"})
 
 
-app.mount("/static", StaticFiles(directory=str(paths.WEB_DIR)), name="static")
+class FreshStatic(StaticFiles):
+    """The interface files. The browser checks for a newer copy on every load (an unchanged file answers 304, fast),
+    so an update shows on a normal reload. Without this, browsers keep old scripts for hours after an update."""
+
+    async def get_response(self, path, scope):
+        res = await super().get_response(path, scope)
+        res.headers["Cache-Control"] = "no-cache"
+        return res
+
+
+app.mount("/static", FreshStatic(directory=str(paths.WEB_DIR)), name="static")
 
 
 @app.exception_handler(Exception)

@@ -12,6 +12,7 @@ function App() {
   const [job, setJob] = useState(null);
   const [toast, setToast] = useState(null);
   const [cameraDraft, setCameraDraft] = useState(null); // {draft, samplePath, clipId}
+  const [ver, setVer] = useState(null);
   const toastTimer = useRef(null);
 
   const notify = useCallback((msg, kind = 'error') => {
@@ -33,6 +34,7 @@ function App() {
   useEffect(() => {
     refresh();
     api.get('/api/library').then(setLib).catch((e) => notify(e.message));
+    api.get('/api/version').then(setVer).catch(() => {});
   }, []);
 
   // Run a server job and show progress in the top bar.
@@ -61,6 +63,7 @@ function App() {
   return html`
     <div class="topbar">
       <div class="brand">Color Grader</div>
+      ${ver && html`<span class="dim" style="font-size:11px" title="Version and update (git commit) this app runs">v${ver.version}${ver.commit ? ` · ${ver.commit}` : ''}</span>`}
       <div class="tabs">
         ${tabs.map(([id, name]) => html`<button class=${'tab' + (tab === id ? ' active' : '')} onClick=${() => setTab(id)}>${name}</button>`)}
       </div>

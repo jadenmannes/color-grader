@@ -28,6 +28,10 @@ macOS and Linux:
 
 The install script sets up Python through `uv`, installs the packages, and fetches ffmpeg when your system has none. The start script opens the app in your browser at `http://127.0.0.1:8765`.
 
+### Updating
+
+Pull the update in the color-grader folder, then restart the app (`.\start.bat` or `./start.sh`) and reload the page. The top bar shows the version and the update (git commit) the app runs. Versions before 4541dc0 let the browser keep old interface files: after updating from one of those, reload once with Ctrl+F5 (Cmd+Shift+R on a Mac).
+
 ## The stack, in two sentences
 
 A Python backend does all color math in 32-bit float with NumPy and colour-science, and ffmpeg decodes and encodes at full bit depth, so no browser video player ever touches your pixels during analysis. The interface is a local web page served by the same process, with no build step and no cloud service.

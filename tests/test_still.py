@@ -54,3 +54,13 @@ def test_still_renders_at_full_resolution_and_saves_16_bit(proj, client, workdir
     assert img16.dtype == np.uint16 and img16.shape == (540, 960, 3)
     assert client.get("/api/still", params={"clip": clip["id"], "stage": "nope"}).status_code == 400
     assert client.get("/api/still", params={"clip": "missing"}).status_code == 400
+
+
+def test_interface_files_stay_fresh_after_an_update(client):
+    """Browsers keep scripts without a Cache-Control header for hours: after a git pull the app looked old."""
+    r = client.get("/static/js/main.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    assert client.get("/static/js/main.js", headers={"If-None-Match": r.headers["etag"]}).status_code == 304
+    assert client.get("/").headers["cache-control"] == "no-store"
+    v = client.get("/api/version").json()
+    assert v["version"] and "commit" in v
