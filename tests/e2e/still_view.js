@@ -35,6 +35,20 @@ const assert = (cond, msg) => { if (!cond) { console.error('FAIL: ' + msg); proc
   await page.click('.fs-exit');
   await page.waitForFunction(() => !document.fullscreenElement);
 
+  // noise reduction on: Full quality says it softens detail and turns it off in one click
+  const st0 = (await (await page.request.get(url + 'api/state')).json()).project;
+  await page.request.put(url + 'api/grade/finish', { data: { finish: { ...st0.finish, detail: { ...st0.finish.detail, denoise: 40 } } } });
+  await page.waitForTimeout(1500);
+  await page.click('button:has-text("Full quality")');
+  await page.waitForSelector('.still-warn:has-text("Noise reduction 40")');
+  await page.click('.still-warn button:has-text("Turn off")');
+  await page.waitForSelector('.still-warn', { state: 'detached' });
+  const st1 = (await (await page.request.get(url + 'api/state')).json()).project;
+  assert(st1.finish.detail.denoise === 0, 'Turn off sets noise reduction to 0');
+  await page.keyboard.press('Escape');
+  if (await page.isVisible('.still')) await page.keyboard.press('Escape');
+  await page.waitForSelector('.still', { state: 'detached' });
+
   // 1. the button opens the still at the source's full resolution
   await page.click('button:has-text("Full quality")');
   await page.waitForSelector('.still .still-pic img');

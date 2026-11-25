@@ -3,7 +3,7 @@
 import { html, useState, useEffect, useRef, useLayoutEffect } from '/static/vendor/htm-preact-standalone.js';
 import { qs, fmtTime } from './api.js';
 
-export function StillView({ clip, shot, t, before, after, names, version, onClose }) {
+export function StillView({ clip, shot, t, before, after, names, version, onClose, denoise = 0, onDenoiseOff }) {
   const root = useRef(null);
   const stage = useRef(null);
   const [mode, setMode] = useState('after');          // after | split | before
@@ -140,6 +140,9 @@ export function StillView({ clip, shot, t, before, after, names, version, onClos
     <div class="still" ref=${root}>
       <div class="still-bar">
         <div class="still-title"><b>Full quality</b><span class="dim">${where}</span></div>
+        ${denoise > 0 && html`<div class="still-warn" title="Noise reduction removes fine texture along with the noise: leaves, skin, brick. Keep it for visibly noisy, low-light footage.">
+          <span class="badge warn">Noise reduction ${denoise}: softens detail</span>
+          ${onDenoiseOff && html`<button class="small" onClick=${onDenoiseOff}>Turn off</button>`}</div>`}
         <div class="seg">
           <button class=${mode === 'after' ? 'on' : ''} onClick=${() => setMode('after')}>${names[after]}</button>
           <button class=${mode === 'split' ? 'on' : ''} disabled=${!imgs.before} onClick=${() => setMode('split')}>Split</button>

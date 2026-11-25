@@ -389,7 +389,12 @@ export function ProjectPage({ ctx }) {
         <${Viewer} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} version=${version} reference=${proj.reference} play=${play} mode=${viewerMode} feed=${watch ? feed : []}
           onFull=${() => setStill(true)} wrapRef=${wrapEl} isFs=${isFs} onFs=${toggleFs} />
         ${still && clip && html`<${StillView} clip=${clip} shot=${shot} t=${tDeb} before=${before} after=${after} names=${STAGE_NAMES} version=${version}
-          onClose=${() => setStill(false)} />`}
+          onClose=${() => setStill(false)} denoise=${((proj.finish || {}).detail || {}).denoise || 0}
+          onDenoiseOff=${async () => {
+            const f = JSON.parse(JSON.stringify(proj.finish));
+            f.detail = { ...(f.detail || {}), denoise: 0 };
+            try { await api.put('/api/grade/finish', { finish: f }); await refresh(); setLiveVersion((v) => v + 1); } catch (e) { notify(e.message); }
+          }} />`}
         ${clip && html`<div class="transport">
           ${!clip.info.is_image && proj.graded ? (play
             ? html`<button class="small" onClick=${() => setPlay(null)}>Back to frames</button>`

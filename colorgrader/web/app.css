@@ -257,3 +257,4 @@ input.ctl-num { padding: 2px 4px; font-size: 11.5px; text-align: right; }
   border-radius: 6px; padding: 10px 14px; font-size: 13px; pointer-events: none; }
 .still-help { flex: none; height: 26px; line-height: 26px; text-align: center; font-size: 11.5px; color: var(--dim); background: var(--panel);
   border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; }
+.still-warn { display: flex; align-items: center; gap: 6px; }

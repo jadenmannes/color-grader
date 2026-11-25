@@ -211,6 +211,8 @@ function GradeTab({ ctx, shot, onLive }) {
             <input type="range" min="0" max="100" step="5" value=${(fin.detail || {})[key] || 0}
               onChange=${(e) => setFinish({ detail: { [key]: parseInt(e.target.value, 10) } })} />
             <span class="mono" style="width:44px">${(fin.detail || {})[key] || 0}</span></div>`)}
+        ${(fin.detail || {}).denoise > 0 && html`<div class="notice" style="margin:4px 0 6px 22px">Noise reduction is at ${fin.detail.denoise}. It removes fine texture along with the noise: leaves, skin, brick and fog turn soft.
+          Keep it for visibly noisy, low-light footage. <button class="small" onClick=${() => setFinish({ detail: { denoise: 0 } })}>Turn off</button></div>`}
         <div class="dim" style="margin:2px 0 6px 22px">Judge noise and sharpness at full size: press F or Full quality under the viewer, then 100%.</div>
         <div class="row" title="Darkens the background around tracked faces and shoulders. The speaker stays lit."><input type="checkbox" checked=${(fin.relight || {}).enabled} onChange=${(e) => setFinish({ relight: { enabled: e.target.checked } })} />
           <span style="width:70px">Relight</span>
