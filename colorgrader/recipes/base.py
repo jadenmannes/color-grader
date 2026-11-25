@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import media
 from ..analysis import names
 from ..color import working as W
 from ..color.transforms import correction_gains
@@ -40,7 +41,8 @@ def context(proj, st: dict[str, Any]) -> dict[str, Any]:
     for clip in state["clips"]:
         info = clip["info"]
         entry: dict[str, Any] = {"id": clip["id"], "name": clip["name"], "fps": info["fps"] or 25.0, "is_image": info["is_image"],
-                                 "duration": info["duration"], "bit_depth": info["bit_depth"], "shots": []}
+                                 "duration": info["duration"], "bit_depth": info["bit_depth"], "shots": [],
+                                 "color_rebuild": proj.color_rebuild_on(clip), "bits_per_pixel": media.bits_per_pixel(info)}
         try:
             cam, prof = proj.profile_of(clip)
             idt, _ = proj.idt(clip)

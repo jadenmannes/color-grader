@@ -225,7 +225,20 @@ function AnalysisPanel({ ctx, clip, shot }) {
         <div>Camera metadata</div><div>${[i.make, i.model].filter(Boolean).join(' ') || 'none'}</div>
         <div>Detection</div><div>${clip.detect.method === 'metadata' ? 'From metadata' : clip.detect.method === 'image' ? 'Estimated from the picture' : 'No match'}${clip.confirmed ? ', confirmed' : ''}</div>
         ${clip.analysis && clip.analysis.seconds ? html`<div>Analysis time</div><div>${clip.analysis.seconds} s for ${fmtTime(i.duration)}</div>` : ''}
+        ${clip.bits_per_pixel != null ? html`<div>Compression</div><div>${(i.bit_rate / 1e6).toFixed(1)} Mbps, ${clip.bits_per_pixel.toFixed(2)} bits per pixel
+          <span class="dim">(camera files: 0.3 to 0.5)</span></div>` : ''}
       </div>
+      ${!i.is_image && !i.is_rgb && (i.chroma === '420' || i.chroma === '422') && html`<div class="card" style="margin-top:10px">
+        <div class="row" style="justify-content:space-between"><b>Rebuild color from brightness</b>
+          <select style="width:auto" value=${clip.color_rebuild || 'auto'} onChange=${async (e) => {
+            try { await api.put(`/api/clips/${clip.id}/color-rebuild`, { mode: e.target.value }); await ctx.refresh(); } catch (err) { ctx.notify(err.message); }
+          }}>
+            <option value="auto">Auto (${clip.color_rebuild_auto ? 'on' : 'off'})</option><option value="on">On</option><option value="off">Off</option>
+          </select></div>
+        <div class="hint">${clip.color_rebuild_active
+          ? 'On: this file stores its color at a fraction of the brightness resolution and in compressed blocks. A grade with more saturation shows them as squares on skin and stair steps on colored edges. The app rebuilds the color from the sharp brightness, in the viewer, Full quality and the export.'
+          : 'Off: the color stays exactly as the file stores it. Turn it on when graded skin or colored clothes show blocks or stair-stepped edges.'}</div>
+      </div>`}
     </div>`;
 }
 

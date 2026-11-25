@@ -320,6 +320,20 @@ def read_frame(info: dict[str, Any], t: float, max_width: int = 1280, prefilter:
     return np.frombuffer(r.stdout[:need], dtype="<u2").copy(), w, h
 
 
+CODEC_EFFICIENCY = {"h264": 1.0, "hevc": 1.6, "h265": 1.6, "vp9": 1.6, "av1": 2.0}   # bits that buy the same picture as H.264
+
+
+def bits_per_pixel(info: dict[str, Any]) -> float | None:
+    """How much data the file spends on each pixel of each frame, in H.264 terms. None when the bitrate is unknown.
+
+    Camera files of the A7C II: 0.3 to 0.5. A 4K edit exported at 25 Mbps: 0.10. Web downloads: 0.05 to 0.1."""
+    rate, fps = float(info.get("bit_rate") or 0), float(info.get("fps") or 0)
+    w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+    if info.get("is_image") or rate <= 0 or fps <= 0 or w * h <= 0:
+        return None
+    return round(rate / (w * h * fps) * CODEC_EFFICIENCY.get(str(info.get("codec", "")).lower(), 1.0), 3)
+
+
 def decode_threads() -> int:
     """Decoder threads for long decodes. Every thread holds its own full-size frames: 8 keeps 4K decoding fast and its memory in bounds."""
     return max(2, min(8, os.cpu_count() or 4))

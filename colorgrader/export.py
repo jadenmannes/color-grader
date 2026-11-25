@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -16,6 +17,7 @@ from typing import Any, Callable
 import numpy as np
 
 from . import media, paths, settings
+from .color import chroma
 from .color import working as W
 from .color.lut import Lut3D, write_cube
 from .grade import relight as relight_mod
@@ -399,12 +401,19 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     chain = []
     scale_first = bool(max_width and info["display_width"] > max_width)
     denoise = denoise_chain(dn, info["display_width"] if not preview else w, info)
+    # Blocky compressed color gets rebuilt from the brightness by the app's own code (color/chroma.py), the same code
+    # the viewer and the still run: ffmpeg decodes, the app rebuilds each frame, ffmpeg grades and encodes.
+    rebuild = stage != "source" and not info["is_rgb"] and proj.color_rebuild_on(clip)
+    pre = []
     if denoise and not preview:
-        chain.append(denoise)   # noise reduction on the camera signal, before any conversion
-    if scale_first:
-        chain.append(f"scale={w}:{h}:flags=bicubic:in_range={rng_s}:out_range={rng_s}")
+        pre.append(denoise)   # noise reduction on the camera signal, before any conversion
+    if scale_first or rebuild:
+        flags = "lanczos+accurate_rnd+full_chroma_int" if rebuild else "bicubic"
+        pre.append(f"scale={w}:{h}:flags={flags}:in_range={rng_s}:out_range={rng_s}")
     if denoise and preview:
-        chain.append(denoise)   # the small playback file cleans after scaling: same look, a fraction of the time
+        pre.append(denoise)   # the small playback file cleans after scaling: same look, a fraction of the time
+    if not rebuild:
+        chain += pre
     if info["is_rgb"]:
         chain.append("format=gbrpf32le")
     elif use_z:
@@ -421,7 +430,12 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
         chain.append(f"lut3d=file='{_ff_path(p)}':interp=tetrahedral{cond}")
     graph = f"[0:v]{','.join(chain)}[g0]"
     last = "g0"
-    inputs = ["-i", info["path"]]
+    if rebuild:
+        inputs = ["-f", "rawvideo", "-pix_fmt", "yuv444p16le", "-s", f"{w}x{h}", "-r", f"{fps:.6f}", "-i", "pipe:0"]
+        decode_cmd = [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-i", info["path"], "-an", "-sn",
+                      "-vf", ",".join(pre + ["format=yuv444p16le"]), "-f", "rawvideo", "-pix_fmt", "yuv444p16le", "pipe:1"]
+    else:
+        inputs = ["-i", info["path"]]
     n_in = 1
     rl_file = None
     if relit:
@@ -509,6 +523,10 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     else:
         tail += [to_yuv(f["pix"], True), params]
         graph += f";[{last}]{','.join(tail)}[out]"
+    src_in = 0
+    if rebuild:   # sound and metadata come from the original file
+        src_in = n_in
+        inputs += ["-i", info["path"]]
     cmd = [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", *inputs, "-filter_complex", graph, "-map", "[out]"]
     codec = list(f["codec"])
     if preview:
@@ -520,14 +538,21 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
         cmd += ["-x265-params", f"log-level=error:colorprim=bt709:transfer={trc}:colormatrix=bt709:range=limited:"
                                 "no-sao=1:psy-rd=2.0:psy-rdoq=2.0:aq-mode=3:deblock=-1,-1"]
     if info["has_audio"]:
-        cmd += ["-map", "0:a:0?"]
+        cmd += ["-map", f"{src_in}:a:0?"]
         if f["ext"] == ".mp4" or preview:
             cmd += (["-c:a", "copy"] if info["audio_codec"] == "aac" else ["-c:a", "aac", "-b:a", "256k"])
         else:
             cmd += (["-c:a", "copy"] if info["audio_codec"].startswith("pcm") else ["-c:a", "pcm_s24le"])
-    cmd += ["-map_metadata", "0", "-movflags", "+faststart+write_colr", "-progress", "pipe:1", "-nostats", str(out_path)]
+    cmd += ["-map_metadata", str(src_in), "-movflags", "+faststart+write_colr", "-progress", "pipe:1", "-nostats", str(out_path)]
     t0 = time.time()
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **media._popen_kwargs())
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if rebuild else None, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            **media._popen_kwargs())
+    feed_errors: list[BaseException] = []
+    feeder = None
+    if rebuild:
+        feeder = threading.Thread(target=_feed_rebuilt, args=(decode_cmd, proc, w, h, w / float(info["display_width"]), feed_errors),
+                                  daemon=True)
+        feeder.start()
     dur = max(info["duration"], 1e-3)
     assert proc.stdout is not None
     for line in proc.stdout:
@@ -538,13 +563,64 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
                 pass
     err = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
     rc = proc.wait()
+    if feeder is not None:
+        feeder.join(timeout=30)
     if rl_file is not None:   # after ffmpeg exits: Windows keeps an open file locked
         rl_file.unlink(missing_ok=True)
     if rc != 0:
         raise ExportError(f"ffmpeg failed: {err[-600:]}")
+    if feed_errors:
+        raise ExportError(f"Rebuilding the color failed: {feed_errors[0]}")
     say(1.0, "Done")
     return {"path": str(out_path), "format": f["id"], "format_name": f["name"], "seconds": round(time.time() - t0, 1),
             "width": w, "height": h, "pix_fmt": f["pix"], "tags": {"primaries": "bt709", "transfer": trc, "matrix": "bt709", "range": "tv"}}
+
+
+def _read_exact(stream, size: int) -> bytes | None:
+    chunks, got = [], 0
+    while got < size:
+        part = stream.read(size - got)
+        if not part:
+            return None
+        chunks.append(part)
+        got += len(part)
+    return b"".join(chunks)
+
+
+def _feed_rebuilt(decode_cmd: list[str], enc: subprocess.Popen, w: int, h: int, scale: float, errors: list[BaseException]) -> None:
+    """Decode with ffmpeg, rebuild each frame's color, write it to the encoder. Frames keep their order."""
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+
+    dec = None
+    try:
+        dec = subprocess.Popen(decode_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **media._popen_kwargs())
+        size = w * h * 3 * 2
+        workers = max(1, min(pipeline.render_threads(), 3 if w * h > 4_000_000 else 4))   # each 4K frame holds ~150 MB while it works
+        with ThreadPoolExecutor(workers) as pool:
+            pending: deque = deque()
+            while True:
+                raw = _read_exact(dec.stdout, size)
+                if raw is None:
+                    break
+                pending.append(pool.submit(chroma.rebuild, np.frombuffer(raw, dtype="<u2"), w, h, scale))
+                while len(pending) > 2 * workers:
+                    enc.stdin.write(pending.popleft().result().tobytes())
+            while pending:
+                enc.stdin.write(pending.popleft().result().tobytes())
+    except BaseException as exc:   # a broken pipe when the encoder stopped, or a decode failure
+        errors.append(exc)
+    finally:
+        try:
+            enc.stdin.close()
+        except OSError:
+            pass
+        if dec is not None:
+            try:
+                dec.kill()
+            except OSError:
+                pass
+            dec.wait()
 
 
 def render_clips(proj, clip_ids: list[str] | None = None, fmt: str | None = None,
@@ -583,7 +659,7 @@ def _preview_signature(proj, clip_id: str, stage: str) -> str:
     core = [stage, proj.state["look"] if stage == "graded" else None, proj.state["strength"] if stage == "graded" else None,
             proj.state["finish"] if stage == "graded" else None,
             [(s["start"], s["end"], s.get("grade")) for s in proj.shots_of(clip_id)], clip.get("camera_id"), clip.get("profile_id"),
-            proj.profile_signature(clip), st["output_space"], st["max_input_nits"], PREVIEW_WIDTH]
+            proj.profile_signature(clip), st["output_space"], st["max_input_nits"], PREVIEW_WIDTH, proj.color_rebuild_on(clip)]
     return hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 

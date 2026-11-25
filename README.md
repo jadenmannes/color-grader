@@ -94,6 +94,18 @@ Each look lists the colorist workflow with its values and reasons: 1 white balan
 
 Every shot also gets its own black point and contrast (the clip-level EXP/CON step): haze comes off in linear light, crushed blacks open, and a flat shot gets contrast around its own middle so its exposure stays. Once a look is on, each shot is trimmed again under it, so one dark or hazy shot never shifts the rest.
 
+### Rebuilt color for hard-compressed files
+
+An edit exported at a low bitrate, a download or a phone clip keeps its color at a fraction of the brightness resolution, in compressed blocks of 16 by 16 pixels. In a flat log picture nobody sees them. A grade that adds saturation shows them as squares on skin and stair-stepped edges on colored clothes.
+
+The app rebuilds that color from the file's sharp brightness with a guided filter: inside each small window the color follows the brightness. Where the brightness is smooth, the block steps vanish. At a brightness edge, the color edge snaps to it. The brightness itself stays untouched.
+
+- Auto switches it on for 8-bit 4:2:0 and 4:2:2 files under 0.2 bits per pixel. Camera files of the A7C II hold 0.3 to 0.5 and keep their color as recorded: on clean footage the rebuild costs some color accuracy. A 4K edit exported at 25 Mbps holds 0.10.
+- The Analysis tab shows the file's bits per pixel and sets it per clip: Auto, On or Off.
+- The viewer, Full quality and the export all run the same code. The export streams every frame through it, which adds about a fifth to the export time.
+- Measured on a real 4K S-Log3 edit exported at 25 Mbps: color block steps 1.21 times the in-block changes in the graded picture, 0.93 after the rebuild (1.0 means no block pattern).
+- Resolve has no matching control. The recipe says so for each clip that uses it.
+
 ### Subject relight
 
 The interview technique of darkening the frame and keeping the speaker lit. The analysis finds faces on every analyzed frame (two per second) and smooths their path. A soft ellipse sits over each head, from above the hairline to below the chin, and a wide one over the shoulders and chest. Outside them the picture drops by the set number of stops in the working space; inside, the subject keeps its exposure exactly (the hand-made `2 - g` shortcut leaves the subject 13% darker). The feather is about a third of each radius, so no edge shows.
@@ -252,6 +264,7 @@ uv run pytest
 - `tests/test_suggest.py` covers the look suggestions: three different looks, each inside the quality rules, chosen by the footage.
 - `tests/test_controls.py` checks every color control: neutral changes nothing, each control moves only what it should, strength and rounding hold, and the API takes partial edits and rejects bad input.
 - `tests/test_mcp.py` drives the MCP server over stdin and stdout against a running app: every control, shot trims, secondaries with a picked color, the key view and undo.
+- `tests/test_chroma.py` checks the color rebuild: block steps gone, brightness and color edges kept, Auto on for a hard export and off for 10-bit, and the export carries it.
 - `tests/test_still.py` checks the full-quality still (full resolution, 16-bit save), shows strip rendering equals whole-frame rendering bit for bit, and checks the fast wide blur against a true Gaussian.
 - `tests/e2e/run.sh` drives the real add-camera form, the Color tab, the assistant cursor and the full-quality still in a headless browser.
 

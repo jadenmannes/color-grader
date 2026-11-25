@@ -26,6 +26,7 @@ from .color.ycbcr import signal_to_absolute
 from .grade import model, pipeline
 from .grade import controls as controls_mod
 from .grade import relight as relight_mod
+from .color import chroma as chroma_mod
 
 F32 = np.float32
 SAMPLE_PER_FRAME = 3000
@@ -412,13 +413,41 @@ class Project:
     # ------------------------------------------------------------- frames
     FRAME_CACHE_BYTES = 320 * 1024 * 1024   # decoded frames kept for the viewer: about six 4K frames or many previews
 
+    @staticmethod
+    def color_rebuild_auto(info: dict[str, Any]) -> bool:
+        """Auto: an 8-bit 4:2:0 or 4:2:2 file compressed hard (an export, a download) gets its color rebuilt."""
+        if info["is_image"] or info["is_rgb"] or info.get("chroma") not in ("420", "422") or int(info.get("bit_depth", 8)) > 8:
+            return False
+        bpp = media.bits_per_pixel(info)
+        return bpp is not None and bpp < chroma_mod.AUTO_MAX_BPP
+
+    def color_rebuild_on(self, clip: dict[str, Any]) -> bool:
+        """Rebuild the clip's compressed color from its brightness: on, off, or auto (see color_rebuild_auto)."""
+        mode = clip.get("color_rebuild", "auto")
+        if mode in ("on", "off"):
+            return mode == "on"
+        return self.color_rebuild_auto(clip["info"])
+
+    def set_color_rebuild(self, clip_id: str, mode: str) -> None:
+        if mode not in ("auto", "on", "off"):
+            raise ProjectError("Color rebuild: auto, on or off.")
+        with self.lock:
+            self.clip(clip_id)["color_rebuild"] = mode
+            self._frame_cache.clear()
+            self._still = None
+        self.touch()
+
     def frame_signal(self, clip: dict[str, Any], t: float, width: int, prefilter: str = "", hq: bool = False) -> tuple[np.ndarray, int, int]:
-        key = (clip["id"], round(float(t), 3), int(width), prefilter, hq)
+        rebuild = self.color_rebuild_on(clip)
+        key = (clip["id"], round(float(t), 3), int(width), prefilter, hq, rebuild)
         with self.lock:
             if key in self._frame_cache:
                 self._frame_cache.move_to_end(key)
                 return self._frame_cache[key]
         val = media.read_frame(clip["info"], t, max_width=width, prefilter=prefilter, hq=hq)
+        if rebuild:
+            buf, w, h = val
+            val = (chroma_mod.rebuild(buf, w, h, w / float(clip["info"]["display_width"])), w, h)
         with self.lock:
             self._frame_cache[key] = val
             total = sum(v[0].nbytes for v in self._frame_cache.values())
@@ -763,6 +792,10 @@ class Project:
         with self.lock:
             out = json.loads(json.dumps(self.state, default=str))
         out["applied_look"] = model.at_strength(out["look"], out.get("strength", 80) / 100.0)
+        for c, raw in zip(out["clips"], self.state["clips"]):   # compression and the color rebuild, for the Analysis tab
+            c["bits_per_pixel"] = media.bits_per_pixel(raw["info"])
+            c["color_rebuild_auto"] = self.color_rebuild_auto(raw["info"])
+            c["color_rebuild_active"] = self.color_rebuild_on(raw)
         out["applied_look"]["reasons"] = out["look"].get("reasons", {})
         return out
 

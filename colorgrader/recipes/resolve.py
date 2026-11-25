@@ -202,6 +202,11 @@ def _clip_group(clip: dict[str, Any], shot: dict[str, Any], ctx: dict[str, Any],
             k += 1
             nodes.append(node(str(k), label, title + " (this shot)", tool, how, settings, curves, notes))
         _control_nodes(trim, {k[5:]: v for k, v in why.items() if k.startswith("trim_")}, add_trim, prefix="TRIM ")
+    if clip.get("color_rebuild"):
+        notes.append(f"The app rebuilds this file's compressed color from its brightness before the grade: it holds "
+                     f"{clip.get('bits_per_pixel') or 0:.2f} bits per pixel (camera files 0.3 to 0.5), and its color comes in blocks. "
+                     "Resolve has no matching control. Closest: Noise Reduction, chroma only, in Studio. For the app's clean "
+                     "color, export the graded clip from the app.")
     title = clip["name"]
     if many:
         title += f", shot {shot['index'] + 1}  ({base.timecode(shot['start'], clip['fps'])} to {base.timecode(shot['end'], clip['fps'])})"

@@ -268,6 +268,16 @@ def set_profile(clip_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any
         raise _err(exc)
 
 
+@app.put("/api/clips/{clip_id}/color-rebuild")
+def set_color_rebuild(clip_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Rebuild the clip's compressed color from its brightness: auto, on or off."""
+    try:
+        project.get().set_color_rebuild(clip_id, str(body.get("mode", "auto")))
+    except project.ProjectError as exc:
+        raise _err(exc)
+    return {"ok": True}
+
+
 @app.post("/api/clips/{clip_id}/redetect")
 def redetect(clip_id: str) -> dict[str, Any]:
     try:
