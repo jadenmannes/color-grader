@@ -723,9 +723,10 @@ class Project:
             sk = pipeline.shot_stage(data["skin"].astype(np.float32), g, pipeline.camera_saturation(prof.get("corrections")))
             if stage == "graded":
                 sk = pipeline.look_stage(sk, model.at_strength(self.state["look"], self.state["strength"] / 100.0))
-            ang, skin_sat = skin_mod.skin_on_display(sk, self.odt())
+            odt = self.odt()
+            ang, skin_sat = skin_mod.skin_on_display(sk, odt)
             off = skin_mod.offset_from_line(ang)
-            skin_y = float(np.median(np.clip(self.odt(sk), 0.0, 1.0) @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)))
+            skin_y = float(np.median(np.clip(odt(sk), 0.0, 1.0) @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)))
             out["skin"] = {"luma_percent": round(skin_y * 100, 1), "saturation_percent": round(float(skin_sat), 1),
                            "degrees_from_skin_line": round(off, 1),
                            "leans": "on the line" if abs(off) <= 4 else ("toward yellow-green" if off > 0 else "toward red-magenta")}

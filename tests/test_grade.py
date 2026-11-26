@@ -224,6 +224,23 @@ def test_neutral_look_needs_no_skin_correction():
     assert fix == {"hue_vs_hue": [], "hue_vs_sat": []}
 
 
+def test_scope_readout_reads_skin_on_the_balanced_and_graded_stages(client, workdir):
+    """view_shot and read_shot crashed on every shot with a face (Project.odt() got the skin pixels as an argument).
+    Synthetic faces never reach the face detector, so the shot gets the skin samples an interview gives it."""
+    proj = project.get()
+    clip = load_clip(proj, flog2_clip(workdir / "faces.mov", scenes=[synth.procedural_scene(320, 180)], frames_each=8))
+    auto.build(proj, refit=False)
+    shot = proj.shots_of(clip["id"])[0]
+    skin = W.di_decode(checker_skin(60)).astype(np.float32)                  # linear, as the analysis stores it
+    proj._shot_cache[shot["id"]] = dict(proj.shot_data(shot["id"]), skin=skin)
+    for stage in ("graded", "balanced"):
+        r = client.get("/api/readout", params={"shot": shot["id"], "stage": stage})
+        assert r.status_code == 200, r.text
+        sk = r.json()["skin"]
+        assert 20 < sk["luma_percent"] < 90 and sk["saturation_percent"] > 0 and sk["leans"]
+    assert "skin" not in client.get("/api/readout", params={"shot": shot["id"], "stage": "source"}).json()
+
+
 # ------------------------------------------------------------ quality rules
 def sample_scene():
     lib = library.get()
