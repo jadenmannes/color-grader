@@ -786,12 +786,19 @@ class _Feed:
                 workers = max(1, min(pipeline.render_threads(), 2 if self.w * self.h > 4_000_000 else 4))
                 with ThreadPoolExecutor(workers, thread_name_prefix="rebuild") as pool:
                     pending: deque = deque()
-                    while True:
-                        frame = _read_frame(self.dec.stdout, self.w * self.h * 3)
-                        if frame is None:
-                            break
-                        self.watch.tick()
-                        pending.append(pool.submit(chroma.rebuild, frame, self.w, self.h, self.scale, self.sub, self.bits))
+
+                    def decoded():
+                        while True:
+                            frame = _read_frame(self.dec.stdout, self.w * self.h * 3)
+                            if frame is None:
+                                return
+                            self.watch.tick()
+                            yield frame
+
+                    # each frame with the two before and after it, as the viewer reads them: a frame stored with
+                    # wrecked color takes its color from its neighbors before the rebuild
+                    for fixed in chroma.repair_stream(decoded(), self.w, self.h, self.scale):
+                        pending.append(pool.submit(chroma.rebuild, fixed, self.w, self.h, self.scale, self.sub, self.bits))
                         while len(pending) > workers:
                             self._write(pending.popleft().result())
                     while pending:

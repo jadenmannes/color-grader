@@ -444,11 +444,18 @@ class Project:
             if key in self._frame_cache:
                 self._frame_cache.move_to_end(key)
                 return self._frame_cache[key]
-        val = media.read_frame(clip["info"], t, max_width=width, prefilter=prefilter, hq=hq)
-        if rebuild:
-            buf, w, h = val
-            info = clip["info"]
+        info = clip["info"]
+        if rebuild and not info["is_image"]:
+            # the frames around it too: a frame the export stored with wrecked color takes its color from its neighbors
+            frames, center, w, h = media.read_frames(info, t, 2, 2, max_width=width, prefilter=prefilter, hq=hq)
+            scale = w / float(info["display_width"])
+            buf = chroma_mod.repair(frames, center, w, h, scale)
+            val = (chroma_mod.rebuild(buf, w, h, scale, chroma_mod.subsampling(info), int(info.get("bit_depth", 8))), w, h)
+        elif rebuild:
+            buf, w, h = media.read_frame(info, t, max_width=width, prefilter=prefilter, hq=hq)
             val = (chroma_mod.rebuild(buf, w, h, w / float(info["display_width"]), chroma_mod.subsampling(info), int(info.get("bit_depth", 8))), w, h)
+        else:
+            val = media.read_frame(info, t, max_width=width, prefilter=prefilter, hq=hq)
         with self.lock:
             self._frame_cache[key] = val
             total = sum(v[0].nbytes for v in self._frame_cache.values())

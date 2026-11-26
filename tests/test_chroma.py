@@ -127,3 +127,97 @@ def test_hard_compressed_clip_gets_its_color_rebuilt_everywhere(proj, workdir, t
     got = np.clip(media.raw_to_rgb(buf, w, h, out), 0, 1)
     assert np.abs(got - on).mean() < np.abs(got - off).mean()                    # the export carries the rebuilt color
     assert np.abs(got - on).mean() < 0.012
+
+
+def _ycbcr_clip(path, frames):
+    """8-bit 4:2:0 H.264 from 8-bit Y, Cb, Cr planes (limited range, BT.709 tags)."""
+    h, w = frames[0][0].shape
+    cmd = [media.find_binary("ffmpeg"), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "yuv444p", "-s", f"{w}x{h}", "-r", "30",
+           "-i", "pipe:0", "-c:v", "libx264", "-crf", "8", "-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-colorspace", "bt709", "-color_range", "tv", str(path)]
+    data = b"".join(np.stack(f).astype(np.uint8).tobytes() for f in frames)
+    subprocess.run(cmd, input=data, check=True)
+    return path
+
+
+def _moving_frames(n=24, damage=(), flash=None, repeat=None, w=640, h=360):
+    """A scene panning 3 pixels a frame. damage: frames whose color is wrecked in blocks (magenta), as a hard export
+    stores it now and then. flash: a frame where a patch turns brighter and redder, for real. repeat: a frame that
+    repeats the one before it, damage and all (an edit at 25 fps exported at 30)."""
+    rgb = np.clip(synth.procedural_scene(w + 3 * n, h), 0, 1) ** (1 / 2.4)
+    r = np.random.default_rng(4)
+    hit = np.kron(r.random((h // 16 + 1, w // 16 + 1)) < 0.25, np.ones((16, 16)))[:h, :w]
+    out = []
+    for i in range(n):
+        f = rgb[:, 3 * i:3 * i + w]
+        y = 0.2126 * f[..., 0] + 0.7152 * f[..., 1] + 0.0722 * f[..., 2]
+        cb, cr = (f[..., 2] - y) / 1.8556, (f[..., 0] - y) / 1.5748
+        planes = [16 + 219 * y, 128 + 224 * cb, 128 + 224 * cr]
+        if i in damage:
+            planes[1] = planes[1] + 9 * hit
+            planes[2] = planes[2] + 7 * hit
+        if i == flash:
+            planes[0][100:200, 100:300] += 30
+            planes[2][100:200, 100:300] += 10
+        out.append([np.clip(np.round(pl), 0, 255) for pl in planes])
+    if repeat is not None:
+        out[repeat] = [pl.copy() for pl in out[repeat - 1]]
+    return out
+
+
+def test_a_frame_stored_with_wrecked_color_takes_its_color_from_its_neighbors(workdir):
+    """A 25 Mbps 4K edit export stored one frame in about a hundred with whole blocks of a pink sweater magenta. The
+    frame gets its color from the frames before and after, moved along the motion. Here frame 12 is wrecked and frame 13
+    repeats it (an edit at 25 fps exported at 30); frame 6 turns brighter and redder for real and keeps it."""
+    clean = media.probe(_ycbcr_clip(workdir / "pan_clean.mp4", _moving_frames(repeat=13)))
+    hard = media.probe(_ycbcr_clip(workdir / "pan_hard.mp4", _moving_frames(damage=(12,), flash=6, repeat=13)))
+    w, h = 640, 360
+    at = lambda n: max(0.0, (n - 0.5) / 30.0)      # half a frame before frame n: the reader gives the first frame from t on
+    def chroma_of(buf):
+        return buf.reshape(3, h, w)[1:].astype(np.float32) / 257.0
+    for n in (12, 13):
+        t = at(n)
+        frames, c, _, _ = media.read_frames(hard, t, 2, 2, w, "", True)
+        truth = chroma_of(media.read_frame(clean, t, w, "", True)[0])
+        before = np.hypot(*(chroma_of(frames[c]) - truth))
+        after = np.hypot(*(chroma_of(chroma.repair(frames, c, w, h)) - truth))
+        hit = before > 4
+        assert hit.mean() > 0.1 and after[hit].mean() < 0.25 * before[hit].mean(), (n, before[hit].mean(), after[hit].mean())
+    for n in (6, 8, 0, 23):                          # the flash, a plain frame, both ends: untouched, bit for bit
+        frames, c, _, _ = media.read_frames(hard, at(n), 2, 2, w, "", True)
+        assert chroma.repair(frames, c, w, h) is frames[c], n
+    # the export's stream sees the same neighbors as the viewer's window: same frames out, bit for bit
+    cmd = export._decoder_command(hard["path"], [media._scale_filter(w, h, "lanczos+accurate_rnd+full_chroma_int")])
+    raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+    seq = [np.frombuffer(raw[i * w * h * 6:(i + 1) * w * h * 6], "<u2").copy() for i in range(len(raw) // (w * h * 6))]
+    stream = list(chroma.repair_stream(seq, w, h))
+    assert len(stream) == len(seq) == 24
+    for n in (0, 6, 11, 12, 13, 14, 23):
+        frames, c, _, _ = media.read_frames(hard, at(n), 2, 2, w, "", True)
+        assert np.array_equal(frames[c], seq[n]), n                  # the same frame
+        assert np.array_equal(stream[n], chroma.repair(frames, c, w, h)), n
+
+
+def test_the_export_carries_the_frame_repair_like_the_still(proj, workdir, tmp_path):
+    hard = _ycbcr_clip(workdir / "pan_hard2.mp4", _moving_frames(damage=(12,)))
+    clip = load_clip(proj, hard)
+    auto.build(proj, refit=False)
+    proj.set_color_rebuild(clip["id"], "on")
+    shot = proj.shots_of(clip["id"])[0]
+    t = 11.5 / 30.0
+    still = np.clip(proj.render_still(clip["id"], t, "graded", shot["id"]), 0, 1)
+    real = chroma.repair
+    try:
+        chroma.repair = lambda frames, center, *a, **k: frames[center]
+        proj.set_color_rebuild(clip["id"], "off")
+        proj.set_color_rebuild(clip["id"], "on")
+        broken = np.clip(proj.render_still(clip["id"], t, "graded", shot["id"]), 0, 1)
+    finally:
+        chroma.repair = real
+    res = export.render_clip(proj, clip["id"], tmp_path / "pan.mp4", fmt="h265-10bit-mp4")
+    out = media.probe(res["path"])
+    buf, w, h = media.read_frame(out, t, 640, "", True)
+    got = np.clip(media.raw_to_rgb(buf, w, h, out), 0, 1)
+    yl = lambda im: (im @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
+    cdiff = lambda a, b: float(np.linalg.norm((a - yl(a)) - (b - yl(b)), axis=2).mean())
+    assert cdiff(got, still) < 0.5 * cdiff(got, broken), (cdiff(got, still), cdiff(got, broken))

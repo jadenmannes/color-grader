@@ -320,6 +320,37 @@ def read_frame(info: dict[str, Any], t: float, max_width: int = 1280, prefilter:
     return np.frombuffer(r.stdout[:need], dtype="<u2").copy(), w, h
 
 
+def read_frames(info: dict[str, Any], t: float, before: int = 2, after: int = 2, max_width: int = 1280, prefilter: str = "",
+                hq: bool = False) -> tuple[list[np.ndarray], int, int, int]:
+    """The frame read_frame returns for time t with up to `before` and `after` frames around it, from one decode.
+    Returns (frames, index of the frame at t, width, height). Frame n of the file sits at time n / fps, and read_frame
+    gives the first frame at or after t, so the export, which counts frames from 0, sees the same neighbors."""
+    import math
+
+    fps = float(info.get("fps") or 0)
+    if info["is_image"] or fps <= 0:
+        buf, w, h = read_frame(info, t, max_width, prefilter, hq)
+        return [buf], 0, w, h
+    w, h = fit_size(info, max_width=max_width)
+    n = max(0, math.ceil(round(max(0.0, t), 4) * fps - 1e-6))
+    first = max(0, n - before)
+    cmd = [find_binary("ffmpeg"), "-v", "error", "-nostdin"]
+    if first > 0:
+        cmd += ["-ss", f"{(first - 0.5) / fps:.6f}"]
+    flags = "lanczos+accurate_rnd+full_chroma_int" if hq else "bicubic"
+    cmd += ["-i", info["path"], "-frames:v", str(n - first + 1 + after), "-an", "-sn",
+            "-vf", (prefilter + "," if prefilter else "") + _scale_filter(w, h, flags),
+            "-f", "rawvideo", "-pix_fmt", out_pix_fmt(info), "pipe:1"]
+    r = run(cmd)
+    size = w * h * 3 * 2
+    got = len(r.stdout) // size
+    if r.returncode != 0 or got <= n - first:     # past the end of the clip: the plain reader steps back
+        buf, w, h = read_frame(info, t, max_width, prefilter, hq)
+        return [buf], 0, w, h
+    frames = [np.frombuffer(r.stdout[i * size:(i + 1) * size], dtype="<u2").copy() for i in range(got)]
+    return frames, n - first, w, h
+
+
 CODEC_EFFICIENCY = {"h264": 1.0, "hevc": 1.6, "h265": 1.6, "vp9": 1.6, "av1": 2.0}   # bits that buy the same picture as H.264
 
 
