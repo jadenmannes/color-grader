@@ -89,14 +89,26 @@ export function RecipePanel({ ctx }) {
     ${recipe ? html`<${RecipeView} recipe=${recipe} />` : html`<div class="dim">Loading…</div>`}</div>`;
 }
 
+function fmtDuration(s) {
+  if (s < 90) return `${Math.round(s)} s`;
+  if (s < 5400) return `${Math.round(s / 60)} min`;
+  return `${(s / 3600).toFixed(1)} h`;
+}
+
 export function ExportPanel({ ctx, clip }) {
   const { state, notify, runJob } = ctx;
   const proj = state.project;
   const [formats, setFormats] = useState([]);
   const [format, setFormat] = useState(state.settings.export_format);
   const [luts, setLuts] = useState(null);
-  const [videos, setVideos] = useState(null);
-  useEffect(() => { api.get('/api/export/formats').then(setFormats).catch(() => setFormats([])); }, []);
+  const [last, setLast] = useState(null);   // the newest video export: running, done or failed, also after a page reload
+  const loadLast = () => api.get('/api/export/last').then(setLast).catch(() => {});
+  useEffect(() => { api.get('/api/export/formats').then(setFormats).catch(() => setFormats([])); loadLast(); }, []);
+  useEffect(() => {   // follow a running export, here or started before a reload
+    if (!last || last.state !== 'running') return undefined;
+    const t = setTimeout(loadLast, 1500);
+    return () => clearTimeout(t);
+  }, [last]);
   useEffect(() => { setFormat(state.settings.export_format); }, [state.settings.export_format]);
   if (!proj.shots.length) return html`<div class="pad dim">Add and analyze clips first.</div>`;
   const exportLuts = async () => {
@@ -104,8 +116,10 @@ export function ExportPanel({ ctx, clip }) {
     if (done) setLuts(done.result);
   };
   const exportVideo = async (ids) => {
-    const done = await runJob(() => api.post('/api/export/video', { clip_ids: ids, format }), 'Exporting graded clips');
-    if (done) setVideos(done.result);
+    const started = runJob(() => api.post('/api/export/video', { clip_ids: ids, format }), 'Exporting graded clips');
+    setTimeout(loadLast, 400);
+    await started;
+    loadLast();
   };
   const open = async (path) => {
     try { const r = await api.post('/api/open-folder', { path }); if (!r.ok) notify(`Folder: ${r.path}`, 'info'); } catch (e) { notify(e.message); }
@@ -131,11 +145,21 @@ export function ExportPanel({ ctx, clip }) {
       <button class="primary" disabled=${!isVideo} onClick=${() => exportVideo([clip.id])}>Export this clip</button>
       <button disabled=${videoClips.length < 2} onClick=${() => exportVideo(videoClips.map((c) => c.id))}>Export all ${videoClips.length} clips</button>
     </div>
-    ${videos && html`<div class="card" style="margin-top:10px">
-      <div class="row"><b style="flex:1">${videos.files.length} file${videos.files.length === 1 ? '' : 's'} written</b><button class="small" onClick=${() => open(videos.folder)}>Open folder</button></div>
-      <div class="mono dim" style="margin:4px 0 8px;word-break:break-all">${videos.folder}</div>
-      ${videos.files.map((f) => html`<div style="margin-bottom:6px"><div class="mono">${f.name}</div>
-        <div class="dim">${f.format_name} · ${f.width}×${f.height} · ${f.pix_fmt} · tags ${f.tags.primaries}/${f.tags.transfer}/${f.tags.matrix} · ${f.seconds} s to render</div></div>`)}
+    ${last && last.state === 'running' && html`<div class="card export-run" style="margin-top:10px">
+      <b>Exporting</b><div class="dim" style="margin:4px 0 6px">${last.message || 'Starting'}</div>
+      <div class="progress"><div style=${{ width: Math.round((last.progress || 0) * 100) + '%' }}></div></div>
+      <div class="dim" style="margin-top:6px">4K takes a while: several minutes per minute of footage. The export keeps running when you switch tabs or reload the page.</div>
+    </div>`}
+    ${last && last.state === 'error' && html`<div class="card export-error" style="margin-top:10px">
+      <b>The export failed</b>
+      <div class="mono" style="margin-top:6px;white-space:pre-wrap;word-break:break-word;user-select:text">${last.error}</div>
+    </div>`}
+    ${last && last.state === 'done' && last.result && html`<div class="card" style="margin-top:10px">
+      <div class="row"><b style="flex:1">${last.result.files.length} file${last.result.files.length === 1 ? '' : 's'} written</b><button class="small" onClick=${() => open(last.result.folder)}>Open folder</button></div>
+      <div class="mono dim" style="margin:4px 0 8px;word-break:break-all">${last.result.folder}</div>
+      ${last.result.files.map((f) => html`<div style="margin-bottom:6px"><div class="mono">${f.name}</div>
+        <div class="dim">${f.format_name} · ${f.width}×${f.height} · ${f.pix_fmt} · tags ${f.tags.primaries}/${f.tags.transfer}/${f.tags.matrix} · ${fmtDuration(f.seconds)} to render</div>
+        ${f.note && html`<div class="export-note">${f.note}</div>`}</div>`)}
     </div>`}
     <h3>Recipe</h3>
     <p class="dim">The Recipe tab lists every node and value for your editor. Download it as text from there.</p>

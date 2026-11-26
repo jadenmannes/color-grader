@@ -102,7 +102,8 @@ The app rebuilds that color from the file's sharp brightness with a guided filte
 
 - Auto switches it on for 8-bit 4:2:0 and 4:2:2 files under 0.2 bits per pixel. Camera files of the A7C II hold 0.3 to 0.5 and keep their color as recorded: on clean footage the rebuild costs some color accuracy. A 4K edit exported at 25 Mbps holds 0.10.
 - The Analysis tab shows the file's bits per pixel and sets it per clip: Auto, On or Off.
-- The viewer, Full quality and the export all run the same code. The export streams every frame through it, which adds about a fifth to the export time.
+- The viewer, Full quality and the export all run the same code. The export streams every frame through it, which adds about a fifth to the export time and about 1 GB of memory at 4K.
+- If the rebuild fails during an export, the clip renders again without it. The Export tab says so next to the file, with the reason.
 - Measured on a real 4K S-Log3 edit exported at 25 Mbps: color block steps 1.21 times the in-block changes in the graded picture, 0.93 after the rebuild (1.0 means no block pattern).
 - Resolve has no matching control. The recipe says so for each clip that uses it.
 
@@ -175,6 +176,8 @@ A grade fails when it breaks one of these. The build repairs failures on its own
 - **Recipe tab**: project color settings, then node by node, every control with its exact value and one short reason. Copy it as text or download it. The large view fits a second screen.
 - **LUT set** (Export tab): the look for Resolve, the look with output conversion, the output conversion alone, and per camera profile an input LUT and an any-editor LUT. A text file in the folder says where each file goes. Size 17, 33 or 65 points (Settings).
 - **Graded clip** (Export tab): source resolution, 10-bit H.265 by default, for 8-bit sources too: the grade creates more levels than 8-bit holds. Tagged Rec.709 so QuickTime, phones and YouTube show the same picture. ProRes 422 HQ and DNxHR HQX are in the format list. H.264 8-bit stays available for players without H.265: it sharpens at 16-bit and dithers once at the end, but shows more noise and steps in smooth skies than 10-bit.
+- **Export progress**: the bar at the top counts frames and estimates the time left. 4K takes a while: on a 4-core laptop about 16 minutes per minute of footage. The export keeps running when you switch tabs or reload the page, and the bar comes back. Above 1440p H.265 uses x265's fast preset with texture settings: on real 4K footage it kept as much fine detail as the medium preset (SSIM 0.960 against 0.961) in 35% less time.
+- **When an export fails**, the Export tab keeps the reason on screen until the next export, also after a reload. ffmpeg writes its messages to `ffmpeg.log` in the clip's cache folder, and the error names the file. An export that makes no progress for five minutes stops with a message instead of waiting forever.
 - **Saved looks**: save the current look with a name, apply it to other footage later.
 
 ## Grade with an AI assistant (MCP)
@@ -265,8 +268,9 @@ uv run pytest
 - `tests/test_controls.py` checks every color control: neutral changes nothing, each control moves only what it should, strength and rounding hold, and the API takes partial edits and rejects bad input.
 - `tests/test_mcp.py` drives the MCP server over stdin and stdout against a running app: every control, shot trims, secondaries with a picked color, the key view and undo.
 - `tests/test_chroma.py` checks the color rebuild: block steps gone, brightness and color edges kept, Auto on for a hard export and off for 10-bit, and the export carries it.
+- `tests/test_export_robust.py` checks the export never hangs or fails in silence: a stalled or failed rebuild renders again without it, ffmpeg errors read plainly and name the log, a short file counts as a failure, and the time left follows the frame rate.
 - `tests/test_still.py` checks the full-quality still (full resolution, 16-bit save), shows strip rendering equals whole-frame rendering bit for bit, and checks the fast wide blur against a true Gaussian.
-- `tests/e2e/run.sh` drives the real add-camera form, the Color tab, the assistant cursor and the full-quality still in a headless browser.
+- `tests/e2e/run.sh` drives the real add-camera form, the Color tab, the assistant cursor, the full-quality still and the Export panel in a headless browser.
 
 ## Layout
 

@@ -45,7 +45,10 @@ class ExportError(RuntimeError):
 def export_dir() -> Path:
     st = settings.load()
     d = Path(st["export_folder"]).expanduser() if st.get("export_folder") else paths.sub("exports")
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ExportError(f"The export folder {d} cannot be made ({exc.strerror or exc}). Pick another folder in Settings.") from exc
     return d
 
 
@@ -337,7 +340,23 @@ def _resolve_format(fmt: str, info: dict[str, Any]) -> dict[str, Any]:
 
 def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | None = None, max_width: int | None = None,
                 progress: Callable[[float, str], None] | None = None, stage: str = "graded", preview: bool = False) -> dict[str, Any]:
-    """Render one clip through the grade. preview=True makes a small H.264 file for playback in the app."""
+    """Render one clip through the grade. preview=True makes a small H.264 file for playback in the app.
+    When the color rebuild fails, the clip renders again without it, and the result's note says why."""
+    clip = proj.clip(clip_id)
+    rebuild = stage != "source" and not clip["info"]["is_rgb"] and proj.color_rebuild_on(clip)
+    try:
+        return _render_clip(proj, clip_id, out_path, fmt, max_width, progress, stage, preview, rebuild)
+    except ExportError as exc:
+        if not rebuild:
+            raise
+        (progress or (lambda f, m: None))(0.03, "The color rebuild failed: rendering again without it")
+        res = _render_clip(proj, clip_id, out_path, fmt, max_width, progress, stage, preview, False)
+        res["note"] = f"Exported without the color rebuild, which failed: {exc}"
+        return res
+
+
+def _render_clip(proj, clip_id: str, out_path: Path | None, fmt: str | None, max_width: int | None,
+                 progress: Callable[[float, str], None] | None, stage: str, preview: bool, rebuild: bool) -> dict[str, Any]:
     say = progress or (lambda f, m: None)
     clip = proj.clip(clip_id)
     info = clip["info"]
@@ -403,7 +422,6 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
     denoise = denoise_chain(dn, info["display_width"] if not preview else w, info)
     # Blocky compressed color gets rebuilt from the brightness by the app's own code (color/chroma.py), the same code
     # the viewer and the still run: ffmpeg decodes, the app rebuilds each frame, ffmpeg grades and encodes.
-    rebuild = stage != "source" and not info["is_rgb"] and proj.color_rebuild_on(clip)
     pre = []
     if denoise and not preview:
         pre.append(denoise)   # noise reduction on the camera signal, before any conversion
@@ -430,10 +448,10 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
         chain.append(f"lut3d=file='{_ff_path(p)}':interp=tetrahedral{cond}")
     graph = f"[0:v]{','.join(chain)}[g0]"
     last = "g0"
-    if rebuild:
-        inputs = ["-f", "rawvideo", "-pix_fmt", "yuv444p16le", "-s", f"{w}x{h}", "-r", f"{fps:.6f}", "-i", "pipe:0"]
-        decode_cmd = [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-i", info["path"], "-an", "-sn",
-                      "-vf", ",".join(pre + ["format=yuv444p16le"]), "-f", "rawvideo", "-pix_fmt", "yuv444p16le", "pipe:1"]
+    decode_cmd: list[str] = []
+    if rebuild:   # a short queue: each raw 4K frame is 50 MB
+        inputs = ["-thread_queue_size", "4", "-f", "rawvideo", "-pix_fmt", "yuv444p16le", "-s", f"{w}x{h}", "-r", f"{fps:.6f}", "-i", "pipe:0"]
+        decode_cmd = _decoder_command(info["path"], pre)
     else:
         inputs = ["-i", info["path"]]
     n_in = 1
@@ -529,6 +547,11 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
         inputs += ["-i", info["path"]]
     cmd = [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", *inputs, "-filter_complex", graph, "-map", "[out]"]
     codec = list(f["codec"])
+    if f.get("x265") and w * h > 2560 * 1440:
+        # Above 1440p the fast preset, with the texture settings below, keeps as much fine detail as medium and
+        # takes 35% less time. Measured on the 4K 8-bit footage that needed the color rebuild: SSIM 0.960 against
+        # 0.961, fine detail kept 81 to 85% against 77 to 82%.
+        codec[codec.index("-preset") + 1] = "fast"
     if preview:
         codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
     cmd += codec + ["-pix_fmt", f["pix"], "-color_primaries", "bt709", "-color_trc", trc, "-colorspace", "bt709", "-color_range", "tv"]
@@ -545,82 +568,255 @@ def render_clip(proj, clip_id: str, out_path: Path | None = None, fmt: str | Non
             cmd += (["-c:a", "copy"] if info["audio_codec"].startswith("pcm") else ["-c:a", "pcm_s24le"])
     cmd += ["-map_metadata", str(src_in), "-movflags", "+faststart+write_colr", "-progress", "pipe:1", "-nostats", str(out_path)]
     t0 = time.time()
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if rebuild else None, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            **media._popen_kwargs())
-    feed_errors: list[BaseException] = []
-    feeder = None
-    if rebuild:
-        feeder = threading.Thread(target=_feed_rebuilt, args=(decode_cmd, proc, w, h, w / float(info["display_width"]), feed_errors),
-                                  daemon=True)
-        feeder.start()
-    dur = max(info["duration"], 1e-3)
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        if line.startswith(b"out_time_ms="):
-            try:
-                say(min(0.99, 0.03 + 0.96 * int(line.split(b"=")[1]) / 1e6 / dur), "Rendering preview" if preview else "Rendering graded clip")
-            except ValueError:
-                pass
-    err = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
-    rc = proc.wait()
-    if feeder is not None:
-        feeder.join(timeout=30)
+    total = max(1, int(info.get("frames") or 0) or int(round(info["duration"] * fps)))
+    log_path, dec_log = work / "ffmpeg.log", work / "decode.log"
+    watch = _Watch(total)
+    feed: _Feed | None = None
+    with open(log_path, "wb") as log:
+        log.write(_command_text(cmd, decode_cmd))
+        log.flush()
+        head = log.tell()
+        say(0.03, "Rendering preview" if preview else "Rendering graded clip")
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if rebuild else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
+                                **media._popen_kwargs())
+        try:
+            if rebuild:
+                feed = _Feed(decode_cmd, proc, w, h, w / float(info["display_width"]), dec_log, watch)
+                feed.start()
+            threading.Thread(target=watch.guard, args=(proc, feed), daemon=True, name="export-watch").start()
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if line.startswith(b"frame="):
+                    try:
+                        n = int(line[6:])
+                    except ValueError:
+                        continue
+                    if n > watch.encoded:
+                        watch.frame(n)
+                        say(min(0.99, 0.03 + 0.96 * n / total), watch.text())
+            rc = proc.wait()
+        finally:
+            if proc.poll() is None:   # an error in this thread: never leave ffmpeg running
+                proc.kill()
+                rc = proc.wait()
+            if feed is not None:
+                feed.finish(30)
     if rl_file is not None:   # after ffmpeg exits: Windows keeps an open file locked
         rl_file.unlink(missing_ok=True)
+    if watch.stalled:
+        raise ExportError(f"The export stopped making progress: no new frame for {STALL_SECONDS / 60:.0f} minutes, at frame "
+                          f"{watch.encoded} of {total}. Details: {log_path}")
     if rc != 0:
-        raise ExportError(f"ffmpeg failed: {err[-600:]}")
-    if feed_errors:
-        raise ExportError(f"Rebuilding the color failed: {feed_errors[0]}")
+        msg = _failure_text(_tail(log_path, head), out_path) or f"ffmpeg stopped with code {_exit_code(rc)}"
+        if feed is not None and feed.error and "broken pipe" not in feed.error.lower():
+            msg += f" The color rebuild reported: {feed.error}"
+        raise ExportError(f"ffmpeg failed: {msg} Details: {log_path}")
+    if feed is not None and feed.error:
+        raise ExportError(f"Rebuilding the color failed: {feed.error} Details: {dec_log}")
+    _check_output(out_path, info, log_path)
     say(1.0, "Done")
     return {"path": str(out_path), "format": f["id"], "format_name": f["name"], "seconds": round(time.time() - t0, 1),
-            "width": w, "height": h, "pix_fmt": f["pix"], "tags": {"primaries": "bt709", "transfer": trc, "matrix": "bt709", "range": "tv"}}
+            "width": w, "height": h, "pix_fmt": f["pix"], "tags": {"primaries": "bt709", "transfer": trc, "matrix": "bt709", "range": "tv"},
+            "color_rebuild": rebuild, "log": str(log_path)}
 
 
-def _read_exact(stream, size: int) -> bytes | None:
-    chunks, got = [], 0
-    while got < size:
-        part = stream.read(size - got)
-        if not part:
-            return None
-        chunks.append(part)
-        got += len(part)
-    return b"".join(chunks)
+STALL_SECONDS = 300.0   # five minutes without one more frame decoded, rebuilt or encoded: the export has stopped
 
 
-def _feed_rebuilt(decode_cmd: list[str], enc: subprocess.Popen, w: int, h: int, scale: float, errors: list[BaseException]) -> None:
-    """Decode with ffmpeg, rebuild each frame's color, write it to the encoder. Frames keep their order."""
-    from collections import deque
-    from concurrent.futures import ThreadPoolExecutor
+def _decoder_command(path: str, pre: list[str]) -> list[str]:
+    """ffmpeg decoding the source to 16-bit 4:4:4 for the color rebuild, through the steps that come before it.
+    Two decode and two filter threads and a two-frame output queue: 4K still decodes at 27 frames a second, ten times
+    what the export needs, with 670 MB instead of 1.26 GB (more on computers with many cores)."""
+    return [media.find_binary("ffmpeg"), "-v", "error", "-nostdin", "-threads", "2", "-i", path, "-an", "-sn",
+            "-filter_threads", "2", "-vf", ",".join(pre + ["format=yuv444p16le"]), "-f", "rawvideo", "-pix_fmt", "yuv444p16le",
+            "-thread_queue_size", "2", "pipe:1"]
 
-    dec = None
+
+def _command_text(cmd: list[str], decode_cmd: list[str]) -> bytes:
+    lines = [time.strftime("%Y-%m-%d %H:%M:%S"), "encode: " + subprocess.list2cmdline(cmd)]
+    if decode_cmd:
+        lines.append("decode: " + subprocess.list2cmdline(decode_cmd))
+    return ("\n".join(lines) + "\n\n").encode("utf-8", "replace")
+
+
+def _tail(path: Path, start: int = 0, chars: int = 700) -> str:
+    """The last lines ffmpeg wrote, after the command header."""
     try:
-        dec = subprocess.Popen(decode_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **media._popen_kwargs())
-        size = w * h * 3 * 2
-        workers = max(1, min(pipeline.render_threads(), 3 if w * h > 4_000_000 else 4))   # each 4K frame holds ~150 MB while it works
-        with ThreadPoolExecutor(workers) as pool:
-            pending: deque = deque()
-            while True:
-                raw = _read_exact(dec.stdout, size)
-                if raw is None:
-                    break
-                pending.append(pool.submit(chroma.rebuild, np.frombuffer(raw, dtype="<u2"), w, h, scale))
-                while len(pending) > 2 * workers:
-                    enc.stdin.write(pending.popleft().result().tobytes())
-            while pending:
-                enc.stdin.write(pending.popleft().result().tobytes())
-    except BaseException as exc:   # a broken pipe when the encoder stopped, or a decode failure
-        errors.append(exc)
-    finally:
-        try:
-            enc.stdin.close()
-        except OSError:
-            pass
-        if dec is not None:
+        text = path.read_bytes()[start:].decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+    return text[-chars:]
+
+
+def _exit_code(rc: int) -> str:
+    return hex(rc & 0xFFFFFFFF) if rc < 0 or rc > 255 else str(rc)   # Windows crash codes read as 0xC0000005
+
+
+def _failure_text(text: str, out_path: Path) -> str:
+    """Plain words for the failures people meet, ffmpeg's own text for the rest."""
+    low = text.lower()
+    if "permission denied" in low:
+        return f"Windows did not let ffmpeg write {out_path.name}. Close any player or editor that has it open, then export again."
+    if "no space left" in low or "not enough space" in low or "disk full" in low:
+        return f"The disk that holds {out_path.parent} is full. Free some space, then export again."
+    if "cannot allocate memory" in low or "out of memory" in low or "not enough memory" in low:
+        return "Your computer ran out of memory during the export. Close other programs, then export again."
+    return text
+
+
+def _check_output(out_path: Path, info: dict[str, Any], log_path: Path) -> None:
+    """The file exists, plays and holds the whole clip."""
+    try:
+        got = media.probe(out_path)
+    except Exception as exc:   # noqa: BLE001 - any reason the file does not read is a failed export
+        raise ExportError(f"The export wrote no readable file ({exc}). Details: {log_path}") from exc
+    want = float(info["duration"])
+    if want > 1.0 and got["duration"] < want - max(0.5, 0.02 * want):
+        raise ExportError(f"The export stopped early: {got['duration']:.1f} of {want:.1f} seconds. Details: {log_path}")
+
+
+def _left(seconds: float) -> str:
+    if seconds < 60:
+        return "under a minute left"
+    if seconds < 5400:
+        return f"about {int(round(seconds / 60))} min left"
+    return f"about {seconds / 3600:.1f} h left"
+
+
+class _Watch:
+    """Progress of one render: frames done, time left, and a guard that stops an export that stopped moving."""
+
+    def __init__(self, total: int, clock: Callable[[], float] = time.monotonic):
+        self.total, self.encoded, self.stalled, self.clock = total, 0, False, clock
+        self.last = clock()
+        self.first: tuple[int, float] | None = None   # frame and time of the first progress report
+
+    def tick(self) -> None:
+        self.last = self.clock()
+
+    def frame(self, n: int) -> None:
+        self.encoded = n
+        self.tick()
+        if self.first is None:
+            self.first = (n, self.last)
+
+    def text(self) -> str:
+        n = self.encoded
+        msg = f"Frame {n} of {self.total}"
+        if self.first is not None:
+            n0, t0 = self.first
+            dt = self.clock() - t0
+            if n - n0 >= max(3, 0.02 * self.total) and dt >= 10:
+                msg += " · " + _left((self.total - n) * dt / (n - n0))
+        return msg
+
+    def guard(self, proc: subprocess.Popen, feed: "_Feed | None") -> None:
+        while proc.poll() is None:
+            time.sleep(1.0)
+            if self.encoded >= 0.98 * self.total:   # the last frames are in: finishing the file takes its time
+                continue
+            if self.clock() - self.last > STALL_SECONDS:
+                self.stalled = True
+                if feed is not None:
+                    feed.kill()
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                return
+
+
+def _read_frame(stream, n_values: int) -> np.ndarray | None:
+    """One frame of 16-bit values, read straight into a new array. None at the end of the stream."""
+    frame = np.empty(n_values, dtype="<u2")
+    view = memoryview(frame).cast("B")
+    got = 0
+    while got < len(view):
+        k = stream.readinto(view[got:])
+        if not k:
+            if got == 0:
+                return None
+            raise ExportError(f"the decoder stopped inside a frame ({got} of {len(view)} bytes)")
+        got += k
+    return frame
+
+
+class _Feed:
+    """Decodes with ffmpeg, rebuilds each frame's color, writes it to the encoder. Frames keep their order.
+    At 4K each frame is 50 MB raw and the rebuild needs about 160 MB more while it works: two workers and one frame
+    waiting keep the whole export under the memory a plain export takes plus about 1 GB."""
+
+    def __init__(self, decode_cmd: list[str], enc: subprocess.Popen, w: int, h: int, scale: float, log_path: Path, watch: _Watch):
+        self.cmd, self.enc, self.w, self.h, self.scale = decode_cmd, enc, w, h, scale
+        self.log_path, self.watch = log_path, watch
+        self.dec: subprocess.Popen | None = None
+        self.frames = 0
+        self.error: str | None = None
+        self.done = threading.Event()
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, daemon=True, name="export-feed").start()
+
+    def kill(self) -> None:
+        dec = self.dec
+        if dec is not None and dec.poll() is None:
             try:
                 dec.kill()
             except OSError:
                 pass
-            dec.wait()
+
+    def finish(self, timeout: float) -> None:
+        if not self.done.wait(timeout):
+            self.kill()
+            self.done.wait(5)
+
+    def _write(self, out: np.ndarray) -> None:
+        self.enc.stdin.write(memoryview(out).cast("B"))
+        self.frames += 1
+        self.watch.tick()
+
+    def _run(self) -> None:
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor
+
+        try:
+            with open(self.log_path, "wb") as log:
+                self.dec = subprocess.Popen(self.cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log, **media._popen_kwargs())
+                workers = max(1, min(pipeline.render_threads(), 2 if self.w * self.h > 4_000_000 else 4))
+                with ThreadPoolExecutor(workers, thread_name_prefix="rebuild") as pool:
+                    pending: deque = deque()
+                    while True:
+                        frame = _read_frame(self.dec.stdout, self.w * self.h * 3)
+                        if frame is None:
+                            break
+                        self.watch.tick()
+                        pending.append(pool.submit(chroma.rebuild, frame, self.w, self.h, self.scale))
+                        while len(pending) > workers:
+                            self._write(pending.popleft().result())
+                    while pending:
+                        self._write(pending.popleft().result())
+                rc = self.dec.wait()
+            if rc != 0:
+                self.error = f"decoding the source failed (code {_exit_code(rc)}): {_tail(self.log_path)}"
+            elif self.frames == 0:
+                self.error = f"decoding the source gave no frames. {_tail(self.log_path)}".strip()
+        except BaseException as exc:   # a broken pipe when the encoder stopped, a decode failure, memory
+            if isinstance(exc, MemoryError):
+                self.error = "the computer ran out of memory"
+            else:
+                self.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            try:
+                self.enc.stdin.close()
+            except OSError:
+                pass
+            self.kill()
+            if self.dec is not None:
+                try:
+                    self.dec.wait(10)
+                except Exception:   # noqa: BLE001
+                    pass
+            self.done.set()
 
 
 def render_clips(proj, clip_ids: list[str] | None = None, fmt: str | None = None,
@@ -641,7 +837,7 @@ def render_clips(proj, clip_ids: list[str] | None = None, fmt: str | None = None
             name, n = f"{stem}_{n}", n + 1
         used.add(name)
         out = export_dir() / f"{name}{f['ext']}"
-        r = render_clip(proj, c["id"], out, fmt, progress=lambda fr, m, d=done, sh=share, nm=c["name"]: say(d + sh * fr, f"{m}: {nm}"))
+        r = render_clip(proj, c["id"], out, fmt, progress=lambda fr, m, d=done, sh=share, nm=c["name"]: say(d + sh * fr, f"{nm} · {m}"))
         r["clip_id"], r["name"] = c["id"], Path(r["path"]).name
         files.append(r)
         done += share

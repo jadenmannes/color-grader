@@ -46,6 +46,11 @@ p { margin: 0 0 8px; line-height: 1.45; }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 .spacer { flex: 1; }
 .jobbar { display: flex; align-items: center; gap: 8px; color: var(--dim); min-width: 240px; }
+.jobbar > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 42vw; }
+.jobbar > .progress { flex: 0 0 140px; }
+.export-error { border-color: var(--bad); }
+.export-error b { color: #f1c6be; }
+.export-note { color: var(--warn, #e0b060); margin-top: 2px; }
 .progress { height: 5px; background: #111; border-radius: 3px; flex: 1; overflow: hidden; }
 .progress > div { height: 100%; background: var(--accent); transition: width .25s; }
 .toast { position: fixed; right: 16px; bottom: 16px; background: #2b1d1a; border: 1px solid var(--bad); color: #f1c6be;

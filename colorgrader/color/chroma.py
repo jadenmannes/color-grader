@@ -36,7 +36,9 @@ def rebuild(buf: np.ndarray, w: int, h: int, scale: float = 1.0) -> np.ndarray:
     sw, sh = max(1, w // s), max(1, h // s)
     rs = max(1, r // s)
     k = (2 * rs + 1, 2 * rs + 1)
-    y = planes[0].astype(F32) * F32(1.0 / 65535.0)
+    unit = F32(1.0 / 65535.0)
+    y = planes[0].astype(F32)
+    y *= unit
     ys = cv2.resize(y, (sw, sh), interpolation=cv2.INTER_AREA) if s > 1 else y
     box = lambda a: cv2.boxFilter(a, -1, k, borderType=cv2.BORDER_REFLECT)
     m_y = box(ys)
@@ -44,8 +46,9 @@ def rebuild(buf: np.ndarray, w: int, h: int, scale: float = 1.0) -> np.ndarray:
     out = np.empty_like(planes)
     out[0] = planes[0]
     for i in (1, 2):
-        c = planes[i].astype(F32) * F32(1.0 / 65535.0)
-        cs = cv2.resize(c, (sw, sh), interpolation=cv2.INTER_AREA) if s > 1 else c
+        # shrink first, then convert: no full-size float copy of the color planes
+        cs = (cv2.resize(planes[i], (sw, sh), interpolation=cv2.INTER_AREA) if s > 1 else planes[i]).astype(F32)
+        cs *= unit
         m_c = box(cs)
         a = (box(ys * cs) - m_y * m_c) / (var_y + F32(EPS))
         b = m_c - a * m_y
@@ -53,7 +56,13 @@ def rebuild(buf: np.ndarray, w: int, h: int, scale: float = 1.0) -> np.ndarray:
         if s > 1:
             a = cv2.resize(a, (w, h), interpolation=cv2.INTER_LINEAR)
             b = cv2.resize(b, (w, h), interpolation=cv2.INTER_LINEAR)
-        out[i] = np.clip(np.round((a * y + b) * F32(65535.0)), 0, 65535).astype(np.uint16)
+        # in place: at 4K every full-size float temporary is 33 MB, and the export runs this on several frames at once
+        a *= y
+        a += b
+        a *= F32(65535.0)
+        np.rint(a, out=a)
+        np.clip(a, 0, 65535, out=a)
+        out[i] = a
     return out.reshape(-1)
 
 

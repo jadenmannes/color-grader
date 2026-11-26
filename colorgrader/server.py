@@ -652,6 +652,12 @@ def export_video(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     return {"job": jobs.start("export-video", lambda progress: export.render_clips(p, ids, fmt, progress), "Exporting graded clips")}
 
 
+@app.get("/api/export/last")
+def export_last() -> dict[str, Any] | None:
+    """The newest video export: running, done with its files, or failed with the reason."""
+    return jobs.latest("export-video")
+
+
 @app.post("/api/open-folder")
 def open_folder(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     """Show an export folder in the system file manager. Only folders inside the app's own folders open."""

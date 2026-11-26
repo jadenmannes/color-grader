@@ -54,6 +54,15 @@ function App() {
     }
   }, [refresh, notify]);
 
+  // a page reload during a job (an export takes many minutes): show its progress again
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (!state || resumed.current) return;
+    resumed.current = true;
+    const j = (state.jobs || [])[0];
+    if (j && !job) runJob(async () => ({ job: j.id }), j.label);
+  }, [state]);
+
   const reloadLib = useCallback(() => api.get('/api/library').then(setLib), []);
   const ctx = { state, lib, cams, refresh, notify, runJob, setTab, reloadLib,
     openCameraDraft: (draft, samplePath, clipId) => setCameraDraft({ draft, samplePath, clipId }) };
@@ -68,7 +77,7 @@ function App() {
         ${tabs.map(([id, name]) => html`<button class=${'tab' + (tab === id ? ' active' : '')} onClick=${() => setTab(id)}>${name}</button>`)}
       </div>
       <div class="spacer"></div>
-      ${job && html`<div class="jobbar"><span>${job.message || job.label}</span>
+      ${job && html`<div class="jobbar"><span title=${job.message || job.label}>${job.message || job.label}</span>
         <div class="progress"><div style=${{ width: Math.round(job.progress * 100) + '%' }}></div></div></div>`}
     </div>
     ${tab === 'project' && html`<${ProjectPage} ctx=${ctx} />`}

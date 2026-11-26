@@ -64,6 +64,15 @@ def get(jid: str) -> dict[str, Any] | None:
     return {k: v for k, v in job.items() if k != "trace"}
 
 
+def latest(kind: str) -> dict[str, Any] | None:
+    """The newest job of one kind, running or finished. The Export panel shows it again after a page reload."""
+    with _lock:
+        found = [j for j in _jobs.values() if j["kind"] == kind]
+    if not found:
+        return None
+    return {k: v for k, v in max(found, key=lambda j: j["started"]).items() if k != "trace"}
+
+
 def active() -> list[dict[str, Any]]:
     with _lock:
         return [{k: v for k, v in j.items() if k not in ("trace", "result")} for j in _jobs.values() if j["state"] == "running"]
