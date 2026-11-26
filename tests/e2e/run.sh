@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PY="${PYTHON:-$ROOT/.venv/bin/python}"
 cd "$ROOT"
 SERVERS=()
-trap 'for s in "${SERVERS[@]}"; do kill "$s" 2>/dev/null || true; done' EXIT
+trap 'for s in "${SERVERS[@]}"; do kill "$s" 2>/dev/null || true; done; rm -rf "${HOME1:-}" "${HOME2:-}"' EXIT
 
 serve() {   # serve <home> <port>
   COLORGRADER_HOME="$1" "$PY" -W ignore -m colorgrader --no-browser --port "$2" >"$1/server.log" 2>&1 &

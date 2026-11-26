@@ -96,15 +96,20 @@ Every shot also gets its own black point and contrast (the clip-level EXP/CON st
 
 ### Rebuilt color for hard-compressed files
 
-An edit exported at a low bitrate, a download or a phone clip keeps its color at a fraction of the brightness resolution, in compressed blocks of 16 by 16 pixels. In a flat log picture nobody sees them. A grade that adds saturation shows them as squares on skin and stair-stepped edges on colored clothes.
+An edit exported at a low bitrate, a download or a phone clip keeps its color at a fraction of the brightness resolution, in compressed blocks of 16 by 16 pixels, each block a little off in color. In a flat log picture nobody sees them. A grade that adds saturation shows them as squares on skin, stair-stepped edges on colored clothes, and purple and green blobs on gray skies, walls and white shirts. Color Boost shows them most: it lifts near-gray colors the most.
 
-The app rebuilds that color from the file's sharp brightness with a guided filter: inside each small window the color follows the brightness. Where the brightness is smooth, the block steps vanish. At a brightness edge, the color edge snaps to it. The brightness itself stays untouched.
+The app rebuilds that color in three steps. The brightness stays untouched.
 
-- Auto switches it on for 8-bit 4:2:0 and 4:2:2 files under 0.2 bits per pixel. Camera files of the A7C II hold 0.3 to 0.5 and keep their color as recorded: on clean footage the rebuild costs some color accuracy. A 4K edit exported at 25 Mbps holds 0.10.
+1. An edge-aware average over about three blocks. Pixels of a different brightness or a clearly different color do not mix, so each block's color error averages out with its neighbors' and edges stay. The harder the export, the wider the color range it averages.
+2. A guided filter snaps color edges to the file's sharp brightness edges.
+3. The file's own color comes back wherever it differs from the result by more than the frame's block error: subtitles, thin colored lines, and colored detail as bright as its surroundings.
+
+- Measured on a clean scene (overcast sky, gray wall, white shirt with a lav mic, skin, bricks, a checked shirt, foliage, yellow subtitles) damaged like a 25 Mbps 4K edit export and graded with saturation and Color Boost, color error against the same grade of the clean scene: 5.07% with the file's own color, 2.76% with the guided filter alone (the app until now), 1.56% with the three steps. Blobs on gray areas: 2.97%, 2.01%, 1.05%. Subtitles: 6.6%, 13.6%, 5.7%. Skin: 4.4%, 2.3%, 1.3%.
+- On a real 4K S-Log3 edit exported at 25 Mbps, flat areas that showed squares without the rebuild and soft blobs with the guided filter alone come out clean.
+- Auto switches it on for 8-bit 4:2:0 and 4:2:2 files under 0.2 bits per pixel. Camera files of the A7C II hold 0.3 to 0.5 and keep their color as recorded. A 4K edit exported at 25 Mbps holds 0.10.
 - The Analysis tab shows the file's bits per pixel and sets it per clip: Auto, On or Off.
-- The viewer, Full quality and the export all run the same code. The export streams every frame through it, which adds about a fifth to the export time and about 1 GB of memory at 4K.
+- The viewer, Full quality and the export all run the same code. A 4K frame takes about 0.3 s. The export streams every frame through it, which adds a little under half to the export time and about 1 GB of memory at 4K.
 - If the rebuild fails during an export, the clip renders again without it. The Export tab says so next to the file, with the reason.
-- Measured on a real 4K S-Log3 edit exported at 25 Mbps: color block steps 1.21 times the in-block changes in the graded picture, 0.93 after the rebuild (1.0 means no block pattern).
 - Resolve has no matching control. The recipe says so for each clip that uses it.
 
 ### Subject relight
@@ -267,7 +272,7 @@ uv run pytest
 - `tests/test_suggest.py` covers the look suggestions: three different looks, each inside the quality rules, chosen by the footage.
 - `tests/test_controls.py` checks every color control: neutral changes nothing, each control moves only what it should, strength and rounding hold, and the API takes partial edits and rejects bad input.
 - `tests/test_mcp.py` drives the MCP server over stdin and stdout against a running app: every control, shot trims, secondaries with a picked color, the key view and undo.
-- `tests/test_chroma.py` checks the color rebuild: block steps gone, brightness and color edges kept, Auto on for a hard export and off for 10-bit, and the export carries it.
+- `tests/test_chroma.py` checks the color rebuild: block steps gone, brightness and color edges kept, blobs on a gray sky and a white shirt averaged away while yellow subtitles keep their color, Auto on for a hard export and off for 10-bit, closer to the clean file than the hard file's own color, and the export carries it.
 - `tests/test_export_robust.py` checks the export never hangs or fails in silence: a stalled or failed rebuild renders again without it, ffmpeg errors read plainly and name the log, a short file counts as a failure, and the time left follows the frame rate.
 - `tests/test_still.py` checks the full-quality still (full resolution, 16-bit save), shows strip rendering equals whole-frame rendering bit for bit, and checks the fast wide blur against a true Gaussian.
 - `tests/e2e/run.sh` drives the real add-camera form, the Color tab, the assistant cursor, the full-quality still and the Export panel in a headless browser.

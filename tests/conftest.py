@@ -1,5 +1,7 @@
 """Test setup: every test session gets its own empty user folder."""
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -7,6 +9,7 @@ import pytest
 
 _HOME = tempfile.mkdtemp(prefix="colorgrader-test-")
 os.environ["COLORGRADER_HOME"] = _HOME
+atexit.register(shutil.rmtree, _HOME, ignore_errors=True)   # each run renders clips and exports: hundreds of MB
 
 
 @pytest.fixture(scope="session")

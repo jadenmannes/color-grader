@@ -447,7 +447,8 @@ class Project:
         val = media.read_frame(clip["info"], t, max_width=width, prefilter=prefilter, hq=hq)
         if rebuild:
             buf, w, h = val
-            val = (chroma_mod.rebuild(buf, w, h, w / float(clip["info"]["display_width"])), w, h)
+            info = clip["info"]
+            val = (chroma_mod.rebuild(buf, w, h, w / float(info["display_width"]), chroma_mod.subsampling(info), int(info.get("bit_depth", 8))), w, h)
         with self.lock:
             self._frame_cache[key] = val
             total = sum(v[0].nbytes for v in self._frame_cache.values())

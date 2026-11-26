@@ -581,7 +581,7 @@ def _render_clip(proj, clip_id: str, out_path: Path | None, fmt: str | None, max
                                 **media._popen_kwargs())
         try:
             if rebuild:
-                feed = _Feed(decode_cmd, proc, w, h, w / float(info["display_width"]), dec_log, watch)
+                feed = _Feed(decode_cmd, proc, w, h, w / float(info["display_width"]), chroma.subsampling(info), int(info.get("bit_depth", 8)), dec_log, watch)
                 feed.start()
             threading.Thread(target=watch.guard, args=(proc, feed), daemon=True, name="export-watch").start()
             assert proc.stdout is not None
@@ -746,8 +746,9 @@ class _Feed:
     At 4K each frame is 50 MB raw and the rebuild needs about 160 MB more while it works: two workers and one frame
     waiting keep the whole export under the memory a plain export takes plus about 1 GB."""
 
-    def __init__(self, decode_cmd: list[str], enc: subprocess.Popen, w: int, h: int, scale: float, log_path: Path, watch: _Watch):
-        self.cmd, self.enc, self.w, self.h, self.scale = decode_cmd, enc, w, h, scale
+    def __init__(self, decode_cmd: list[str], enc: subprocess.Popen, w: int, h: int, scale: float, sub: tuple[int, int], bits: int, log_path: Path,
+                 watch: _Watch):
+        self.cmd, self.enc, self.w, self.h, self.scale, self.sub, self.bits = decode_cmd, enc, w, h, scale, sub, bits
         self.log_path, self.watch = log_path, watch
         self.dec: subprocess.Popen | None = None
         self.frames = 0
@@ -790,7 +791,7 @@ class _Feed:
                         if frame is None:
                             break
                         self.watch.tick()
-                        pending.append(pool.submit(chroma.rebuild, frame, self.w, self.h, self.scale))
+                        pending.append(pool.submit(chroma.rebuild, frame, self.w, self.h, self.scale, self.sub, self.bits))
                         while len(pending) > workers:
                             self._write(pending.popleft().result())
                     while pending:

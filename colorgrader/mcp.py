@@ -175,7 +175,7 @@ def project_status(args: dict[str, Any]) -> list[dict[str, Any]]:
     p = _state()
     clips = [{"id": c["id"], "name": c["name"], "camera": c.get("camera_id"), "profile": c.get("profile_id"),
               "duration_s": round(c["info"]["duration"], 2), "size": f"{c['info']['width']}x{c['info']['height']}",
-              "bit_depth": c["info"]["bit_depth"]} for c in p["clips"]]
+              "bit_depth": c["info"]["bit_depth"], "color_rebuild": bool(c.get("color_rebuild_active"))} for c in p["clips"]]
     shots = [{"id": s["id"], "clip": s["clip_id"], "shot": s["index"] + 1, "from_s": s["start"], "to_s": s["end"],
               "faces": bool(s.get("has_faces")), "scene": s.get("scene"),
               "rules": (s.get("report") or {})} for s in p["shots"]]
@@ -722,6 +722,9 @@ INSTRUCTIONS = (
     "3. secondaries for one color family or area such as sky, skin or foliage (sample_color on a point, set_secondary with pick, "
     "view_key to check the selection); 4. finish (set_finish: relight, vignette, grain, noise reduction, sharpening, clarity). "
     "Keep noise reduction at 0 unless the footage is visibly noisy in low light: it removes texture along with the noise. "
+    "On clips with color_rebuild true (hard-compressed 8-bit files) add color with saturation, and keep color boost low: it "
+    "lifts near-gray colors the most and turns leftover compression color into purple and green blotches on gray skies, "
+    "walls and white clothes. "
     "After every change, view_shot again and judge picture and numbers together: skin near the skin tone line and around "
     "40 to 70 percent luma, blacks near 2 to 5 percent, nothing new clipped, no failing rules. Keep moves small. "
     "design_looks gives three starting points built from the shot. undo reverts the last change."
