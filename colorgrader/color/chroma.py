@@ -40,6 +40,8 @@ from typing import Any
 import numpy as np
 
 F32 = np.float32
+VERSION = 3           # bump when the result changes: playback files rendered with an older rebuild render again
+                      # (1 guided filter, 2 the three steps, 3 bad frames repaired from their neighbors)
 BLOCK_RADIUS = 8      # source pixels: half of the 16-pixel color blocks of H.264 (H.265 blocks are similar or larger)
 EPS = 1e-4            # in 0..1 code values, squared. Smaller keeps color edges sharper where the brightness has an edge
 CLEAN_RADIUS = 48     # source pixels: the block-color cleanup averages over about three blocks

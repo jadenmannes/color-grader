@@ -863,7 +863,8 @@ def _preview_signature(proj, clip_id: str, stage: str) -> str:
     core = [stage, proj.state["look"] if stage == "graded" else None, proj.state["strength"] if stage == "graded" else None,
             proj.state["finish"] if stage == "graded" else None,
             [(s["start"], s["end"], s.get("grade")) for s in proj.shots_of(clip_id)], clip.get("camera_id"), clip.get("profile_id"),
-            proj.profile_signature(clip), st["output_space"], st["max_input_nits"], PREVIEW_WIDTH, proj.color_rebuild_on(clip)]
+            proj.profile_signature(clip), st["output_space"], st["max_input_nits"], PREVIEW_WIDTH,
+            chroma.VERSION if proj.color_rebuild_on(clip) else 0]
     return hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 

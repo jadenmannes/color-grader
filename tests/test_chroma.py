@@ -198,7 +198,7 @@ def test_a_frame_stored_with_wrecked_color_takes_its_color_from_its_neighbors(wo
         assert np.array_equal(stream[n], chroma.repair(frames, c, w, h)), n
 
 
-def test_the_export_carries_the_frame_repair_like_the_still(proj, workdir, tmp_path):
+def test_the_export_carries_the_frame_repair_like_the_still(proj, workdir, tmp_path, monkeypatch):
     hard = _ycbcr_clip(workdir / "pan_hard2.mp4", _moving_frames(damage=(12,)))
     clip = load_clip(proj, hard)
     auto.build(proj, refit=False)
@@ -221,3 +221,8 @@ def test_the_export_carries_the_frame_repair_like_the_still(proj, workdir, tmp_p
     yl = lambda im: (im @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
     cdiff = lambda a, b: float(np.linalg.norm((a - yl(a)) - (b - yl(b)), axis=2).mean())
     assert cdiff(got, still) < 0.5 * cdiff(got, broken), (cdiff(got, still), cdiff(got, broken))
+    # a playback file rendered with an older rebuild renders again
+    export.build_preview(proj, clip["id"])
+    assert export.preview_ready(proj, clip["id"])
+    monkeypatch.setattr(chroma, "VERSION", chroma.VERSION + 1)
+    assert not export.preview_ready(proj, clip["id"])
