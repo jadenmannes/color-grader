@@ -103,19 +103,24 @@ def pick_hero(candidates: list[dict[str, Any]]) -> str:
 
 
 SKIN_FINE = 0.35       # stops: a skin difference this small is aligned in any case
-SKIN_CORROBORATE = 0.5  # a larger one needs the whole picture to differ by at least this share of it, the same way
+SKIN_AGREE = 0.5       # stops: a larger one counts when the whole picture differs by the same amount, within this
 
 
 def exposure_trim(hero: dict[str, Any], shot: dict[str, Any]) -> tuple[float, str]:
-    """Extra exposure for a shot so it sits with the hero. Items hold 'median' (stops) and 'skin' (stops or None).
+    """Extra exposure for a shot so it sits with the hero. Items hold 'median' and 'high' (the 99th percentile), in
+    stops, and 'skin' (stops or None).
 
     Skin brightness belongs to the person: people's skin differs by two stops and more. A skin difference counts as an
-    exposure difference only when it is small, or when the whole picture differs the same way (the same person filmed
-    darker or brighter). A larger skin difference with a picture that matches is a different person, kept as filmed."""
+    exposure difference only when it is small, or when the whole picture differs by the same amount (the same person
+    filmed darker or brighter). Otherwise it is a different person, or the same person in different light, and the skin
+    keeps its own brightness."""
     d_pic = hero["median"] - shot["median"]
+    # the brightest tones (white shirts, walls, sky) move with an exposure change and stay put when only the content is
+    # darker: a darker person in a darker frame under the same light must not pass as the same person filmed darker
+    d_top = hero["high"] - shot["high"] if hero.get("high") is not None and shot.get("high") is not None else d_pic
     if hero.get("skin") is not None and shot.get("skin") is not None:
         d = hero["skin"] - shot["skin"]
-        if abs(d) <= SKIN_FINE or (d * d_pic > 0 and abs(d_pic) >= SKIN_CORROBORATE * abs(d)):
+        if abs(d) <= SKIN_FINE or (abs(d - d_pic) <= SKIN_AGREE and abs(d - d_top) <= SKIN_AGREE):
             trim = float(np.clip(0.8 * d, -1.0, 1.0))
             if abs(trim) >= 0.08:
                 return trim, f"skin brightness matched to the scene's lead shot ({trim:+.2f} stops)"

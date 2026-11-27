@@ -18,8 +18,9 @@ F32 = np.float32
 DWG_Y = np.array([0.27411851, 0.87363190, -0.14775041], dtype=F32)
 
 
-def _stops(lin: np.ndarray) -> float:
-    return float(np.median(np.log2(np.maximum(lin @ DWG_Y, 0.18 * 2.0 ** -8) / 0.18)))
+def _stops(lin: np.ndarray, q: float = 50.0) -> float:
+    """A percentile of brightness (the median by default), in stops from middle gray."""
+    return float(np.percentile(np.log2(np.maximum(lin @ DWG_Y, 0.18 * 2.0 ** -8) / 0.18), q))
 
 
 class Builder:
@@ -115,10 +116,20 @@ class Builder:
         for it in self.items:
             s = it["shot"]
             it["scene"] = int(s["scene"]) if s.get("scene_locked") else auto[s["id"]]
-        # shared white balance for shots of one clip in one scene
+        # shared white balance for shots of one clip in one scene: one camera recording holds one white balance.
+        # An edited file (no camera make or model in it) cuts many recordings and lights together, street and boat:
+        # each of its shots keeps its own white balance.
         groups: dict[tuple, list[dict[str, Any]]] = {}
+        edited = 0
         for it in self.items:
+            info = it["clip"]["info"]
+            if not (info.get("make") or info.get("model")):
+                edited += 1
+                continue
             groups.setdefault((it["scene"], it["clip"]["id"]), []).append(it)
+        if edited > 1:
+            self._note("An edited file holds many recordings: each of its shots keeps its own white balance instead of sharing one.",
+                       "edited_wb")
         for members in groups.values():
             if len(members) < 2:
                 continue
@@ -140,7 +151,7 @@ class Builder:
             def stat(m):
                 lin = pipeline.balance_linear(m["data"]["sample"], m["grade"])
                 sk = _stops(pipeline.balance_linear(m["skin"], m["grade"])) if m["skin"] is not None else None
-                return {"median": _stops(lin), "skin": sk}
+                return {"median": _stops(lin), "high": _stops(lin, 99.0), "skin": sk}
 
             h = stat(hero)
             for m in members:

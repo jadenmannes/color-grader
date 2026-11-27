@@ -49,7 +49,7 @@ A Python backend does all color math in 32-bit float with NumPy and colour-scien
 | Step | Where | What |
 | --- | --- | --- |
 | 1 Input conversion | per clip | Camera curve and gamut to DaVinci Wide Gamut / Intermediate. Finished Rec.709 pictures enter through the exact inverse of the output conversion. |
-| 2 Balance | per shot | Exposure, white balance, black point. Gain and offset on linear light. Shots with no faces anchor on neutral objects, sky and foliage. |
+| 2 Balance | per shot | Exposure, white balance, black point. Gain and offset on linear light. Shots with no faces anchor on neutral objects, sky and foliage. Shots of one camera recording in one scene share its white balance. An edited file (no camera make or model in it) cuts many recordings together, so each of its shots keeps its own. |
 | 3 Shot match | per shot | Shots of one scene match each other. Different cameras match each other before the look. Skin brightness belongs to the person: a shot follows the lead shot's skin only when the whole picture differs the same way (the same person filmed darker or brighter). A person with lighter or darker skin keeps their own brightness. |
 | 3b Shot trim | per shot | Any color control on one shot only. Empty unless you or an assistant set it. |
 | 4 Look | shared | Every color control below. One look for all shots. |

@@ -217,14 +217,36 @@ def test_scene_match_keeps_each_persons_skin_brightness(proj, workdir):
 
 
 def test_scene_match_still_matches_one_person_filmed_darker():
-    hero = {"median": -0.4, "skin": -0.9}
-    shot = {"median": -1.1, "skin": -1.6}                                     # everything 0.7 stops under, skin too
+    hero = {"median": -0.4, "high": 2.0, "skin": -0.9}
+    shot = {"median": -1.1, "high": 1.3, "skin": -1.6}                       # everything 0.7 stops under, skin too
     trim, why = match.exposure_trim(hero, shot)
     assert abs(trim - 0.56) < 0.01 and "skin brightness matched" in why
-    trim, why = match.exposure_trim(hero, {"median": -0.45, "skin": -2.6})   # same picture, skin 1.7 darker: another person
+    trim, why = match.exposure_trim(hero, {"median": -0.45, "high": 2.0, "skin": -2.6})   # same picture, skin 1.7 darker
     assert trim == 0.0 and "different person" in why
-    trim, _ = match.exposure_trim(hero, {"median": -0.4, "skin": -1.1})      # small differences align either way
+    # a darker person in a darker frame under the same light: the middle tones drop with the content, the whites stay
+    trim, why = match.exposure_trim(hero, {"median": -1.7, "high": 1.95, "skin": -2.6})
+    assert "different person" in why and "skin brightness matched" not in why and trim < 0.5
+    trim, _ = match.exposure_trim(hero, {"median": -0.4, "high": 2.0, "skin": -1.1})      # small differences align either way
     assert abs(trim - 0.16) < 0.01
+
+
+def test_scene_match_keeps_a_darker_person_in_a_darker_frame(proj, workdir):
+    """Both shots exposed right under the same light: the second holds more dark content (a dark hoodie, shade) and a
+    person with skin 1.7 stops darker. The middle tones differ about as much as the skin, the whites do not."""
+    scene = synth.procedural_scene(640, 360, skin=False)
+    dark = scene.copy()
+    dark[150:, :] *= np.float32(2.0 ** -1.8)                                  # the lower part: dark clothes and shade
+    clip = load_clip(proj, flog2_clip(workdir / "people_dark.mov", scenes=[scene, dark[:, ::-1]], frames_each=25, size=(640, 360)))
+    shots = proj.shots_of(clip["id"])
+    assert len(shots) == 2
+    for sh, stops in zip(shots, (0.0, -1.7)):
+        proj._shot_cache[sh["id"]] = dict(proj.shot_data(sh["id"]), skin=_skin_lin(stops))
+        proj.set_scene(sh["id"], 1)                                            # one scene, as in the user's edit
+    auto.build(proj, refit=False)
+    shots = proj.shots_of(clip["id"])
+    assert shots[0]["scene"] == shots[1]["scene"]
+    gain_text = " ".join(s["grade"]["reasons"]["gain"] for s in shots)
+    assert "skin brightness matched" not in gain_text and "different person" in gain_text, gain_text
 
 
 def test_darker_skin_exposed_right_is_not_lifted():
@@ -238,6 +260,25 @@ def test_darker_skin_exposed_right_is_not_lifted():
         assert not any("skin" in w for w in why), (level, e, why)
     e, why = balance.exposure_decision(gray * np.float32(0.15), _skin_lin() * np.float32(0.03), False)   # truly underexposed
     assert e > 0.5
+
+
+def test_an_edited_file_keeps_each_shots_own_white_balance(proj, workdir):
+    """Shots of one camera recording share its white balance. An edited master (no camera make or model) cuts street
+    and boat recordings together: sharing pulled the street shots toward the boat's correction."""
+    scene = synth.procedural_scene(640, 360, skin=False)
+    warm = (scene * np.array([1.15, 1.0, 0.85], np.float32)).astype(np.float32)
+    casts = {}
+    for name, tags in (("camera", None), ("edit", {})):
+        proj.reset()
+        kw = {} if tags is None else {"tags": tags}
+        clip = load_clip(proj, flog2_clip(workdir / f"wb_{name}.mov", scenes=[scene, warm[:, ::-1]], frames_each=25, size=(640, 360), **kw))
+        shots = proj.shots_of(clip["id"])
+        for sh in shots:
+            proj.set_scene(sh["id"], 1)
+        auto.build(proj, refit=False)
+        casts[name] = [np.array(s["grade"]["info"]["cast_applied"]) for s in proj.shots_of(clip["id"])]
+    spread = lambda c: float(np.abs(c[0] - c[1]).max())
+    assert spread(casts["edit"]) > spread(casts["camera"]) + 0.02, casts        # the camera file shares, the edit does not
 
 
 # --------------------------------------------------------------------- skin
