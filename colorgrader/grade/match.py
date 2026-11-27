@@ -102,15 +102,32 @@ def pick_hero(candidates: list[dict[str, Any]]) -> str:
     return max(candidates, key=score)["id"]
 
 
+SKIN_FINE = 0.35       # stops: a skin difference this small is aligned in any case
+SKIN_CORROBORATE = 0.5  # a larger one needs the whole picture to differ by at least this share of it, the same way
+
+
 def exposure_trim(hero: dict[str, Any], shot: dict[str, Any]) -> tuple[float, str]:
-    """Extra exposure for a shot so it sits with the hero. Items hold 'median' (stops) and 'skin' (stops or None)."""
+    """Extra exposure for a shot so it sits with the hero. Items hold 'median' (stops) and 'skin' (stops or None).
+
+    Skin brightness belongs to the person: people's skin differs by two stops and more. A skin difference counts as an
+    exposure difference only when it is small, or when the whole picture differs the same way (the same person filmed
+    darker or brighter). A larger skin difference with a picture that matches is a different person, kept as filmed."""
+    d_pic = hero["median"] - shot["median"]
     if hero.get("skin") is not None and shot.get("skin") is not None:
         d = hero["skin"] - shot["skin"]
-        trim = float(np.clip(0.8 * d, -1.0, 1.0))
-        if abs(trim) >= 0.08:
-            return trim, f"skin brightness matched to the scene's lead shot ({trim:+.2f} stops)"
-        return 0.0, ""
-    d = hero["median"] - shot["median"]
+        if abs(d) <= SKIN_FINE or (d * d_pic > 0 and abs(d_pic) >= SKIN_CORROBORATE * abs(d)):
+            trim = float(np.clip(0.8 * d, -1.0, 1.0))
+            if abs(trim) >= 0.08:
+                return trim, f"skin brightness matched to the scene's lead shot ({trim:+.2f} stops)"
+            return 0.0, ""
+        note = (f"skin sits {abs(d):.1f} stops {'darker' if d > 0 else 'brighter'} than in the lead shot while the picture "
+                f"differs by {abs(d_pic):.1f}: a different person, so the skin keeps its own brightness")
+        trim, why = _median_trim(d_pic)
+        return trim, f"{note}; {why}" if why else note
+    return _median_trim(d_pic)
+
+
+def _median_trim(d: float) -> tuple[float, str]:
     if abs(d) > 0.5:
         trim = float(np.clip(0.5 * (d - np.sign(d) * 0.5), -0.6, 0.6))
         if abs(trim) >= 0.08:

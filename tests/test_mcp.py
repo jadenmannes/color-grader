@@ -182,3 +182,12 @@ def test_mcp_server_drives_every_control_secondaries_and_undo(proj, workdir, app
         assert c.tool("undo")["isError"]
     finally:
         c.close()
+
+
+def test_instructions_hold_no_skin_brightness_target():
+    """The assistant once read 'skin around 40 to 70 percent luma' as a target and brightened darker skin toward it."""
+    from colorgrader import mcp
+
+    text = mcp.INSTRUCTIONS.lower()
+    assert "40 to 70" not in text and "skin brightness belongs to the person" in text
+    assert "white and gray objects" in text and "never set one person's skin to another person's brightness" in text

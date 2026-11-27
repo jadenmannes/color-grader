@@ -7,7 +7,7 @@ from colorgrader.analysis.neutral import SKIN_LINE
 from colorgrader.color import working as W
 from colorgrader.color.gamuts import apply_matrix, conversion_matrix
 from colorgrader.color.transforms import OutputTransform
-from colorgrader.grade import auto, lookfit, model, pipeline, quality
+from colorgrader.grade import auto, balance, lookfit, match, model, pipeline, quality
 from colorgrader.grade import skin as skin_mod
 
 from helpers import filmsim_clip, flog2_clip, wall_patch
@@ -189,6 +189,55 @@ def test_shots_of_one_clip_share_their_white_balance(proj, workdir):
     ratios = [np.array(s["grade"]["balance"]["gain"]) / s["grade"]["balance"]["gain"][1] for s in shots]
     assert np.max(np.abs(ratios[0] - ratios[1])) < 0.08
     assert all(r[0] < 1.0 < r[2] for r in ratios)          # warm cast removed in both
+
+
+# ------------------------------------------------------- people differ
+def _skin_lin(level_stops=0.0, n=400):
+    """Linear working-space skin samples (ColorChecker light skin) shifted by level_stops: a person with lighter or
+    darker skin under the same light."""
+    return (W.di_decode(checker_skin(n)) * np.float32(2.0 ** level_stops)).astype(np.float32)
+
+
+def test_scene_match_keeps_each_persons_skin_brightness(proj, workdir):
+    """Two people in one scene under the same light, one with skin 1.7 stops darker. The scene match used to lift the
+    darker person's whole shot by a stop to give both the same skin brightness, washing their skin out."""
+    scene = synth.procedural_scene(640, 360, skin=False)
+    clip = load_clip(proj, flog2_clip(workdir / "people.mov", scenes=[scene, scene[:, ::-1]], frames_each=25, size=(640, 360)))
+    shots = proj.shots_of(clip["id"])
+    assert len(shots) == 2
+    for sh, stops in zip(shots, (0.0, -1.7)):
+        proj._shot_cache[sh["id"]] = dict(proj.shot_data(sh["id"]), skin=_skin_lin(stops))
+    auto.build(proj, refit=False)
+    shots = proj.shots_of(clip["id"])
+    assert shots[0]["scene"] == shots[1]["scene"]                            # one scene, as in the user's edit
+    ex = [s["grade"]["info"]["exposure"] for s in shots]
+    assert abs(ex[0] - ex[1]) < 0.1, ex                                       # the same light keeps the same exposure
+    gain_text = " ".join(s["grade"]["reasons"]["gain"] for s in shots)
+    assert "different person" in gain_text and "skin brightness matched" not in gain_text
+
+
+def test_scene_match_still_matches_one_person_filmed_darker():
+    hero = {"median": -0.4, "skin": -0.9}
+    shot = {"median": -1.1, "skin": -1.6}                                     # everything 0.7 stops under, skin too
+    trim, why = match.exposure_trim(hero, shot)
+    assert abs(trim - 0.56) < 0.01 and "skin brightness matched" in why
+    trim, why = match.exposure_trim(hero, {"median": -0.45, "skin": -2.6})   # same picture, skin 1.7 darker: another person
+    assert trim == 0.0 and "different person" in why
+    trim, _ = match.exposure_trim(hero, {"median": -0.4, "skin": -1.1})      # small differences align either way
+    assert abs(trim - 0.16) < 0.01
+
+
+def test_darker_skin_exposed_right_is_not_lifted():
+    """With a gray card at 0.18, the darkest skin (about 5% reflectance) sits near 0.05, and half that in partial shadow.
+    The old floor of 0.07 lifted it."""
+    gray = np.full((4000, 3), 0.18, np.float32) * np.random.default_rng(2).uniform(0.5, 2.0, (4000, 1)).astype(np.float32)
+    for level in (0.05, 0.025):
+        sk = _skin_lin(float(np.log2(level / 0.18)) - 0.0)
+        sk *= np.float32(level / float(np.median(sk @ balance.DWG_Y)))
+        e, why = balance.exposure_decision(gray, sk, False)
+        assert not any("skin" in w for w in why), (level, e, why)
+    e, why = balance.exposure_decision(gray * np.float32(0.15), _skin_lin() * np.float32(0.03), False)   # truly underexposed
+    assert e > 0.5
 
 
 # --------------------------------------------------------------------- skin

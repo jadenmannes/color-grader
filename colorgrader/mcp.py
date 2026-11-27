@@ -219,7 +219,7 @@ def read_shot(args: dict[str, Any]) -> list[dict[str, Any]]:
 UNITS = ("Look and trim controls: exposure, temp, tint, shadows, highlights and HDR zone exposure in stops. Contrast 1, saturation 50, "
          "offset 25, gain 1, lift and gamma 0, hue 0, color_boost 0 = unchanged. Curves: [input, output] points; DaVinci Intermediate "
          "inputs (black 0, middle gray 0.336), hue inputs in degrees (red 0, yellow 60, green 120, cyan 180, blue 240, magenta 300), "
-         "chroma inputs (skin about 0.03 to 0.06). Shot balance: gain per channel on linear light, offset 25 = unchanged. "
+         "chroma inputs (skin about 0.02 to 0.08 depending on the person). Shot balance: gain per channel on linear light, offset 25 = unchanged. "
          "The look is stored at full strength; strength_percent scales it toward neutral on screen.")
 
 
@@ -587,7 +587,7 @@ CONTROL_PROPS: dict[str, Any] = {
     "shadows": _n("Stops at the center of the shadows: + opens, - deepens. Black and middle gray stay."),
     "highlights": _n("Stops at the center of the highlights: - recovers skies and windows, + lifts. Middle gray stays."),
     "hdr": {"type": "object", "properties": {z: _ZONE for z in ("dark", "shadow", "light", "highlight", "specular")},
-            "description": "HDR zones by brightness: dark (under -3.5 stops), shadow (about -2), light (about +0.75: skin and upper mids), "
+            "description": "HDR zones by brightness: dark (under -3.5 stops), shadow (about -2), light (about +0.75: upper mids), "
                            "highlight (about +2.5), specular (+4.5 and up). Each takes exposure (stops), saturation (1 = unchanged), "
                            "temp and tint (stops). Pass only the zones and fields to change."},
     "rgb_mixer": {"type": "array", "items": RGB, "minItems": 3, "maxItems": 3,
@@ -605,7 +605,7 @@ CONTROL_PROPS: dict[str, Any] = {
     "hue_vs_hue": {**POINTS, "description": "[hue degrees, rotation degrees]. Red 0, yellow 60, green 120, cyan 180, blue 240, magenta 300."},
     "hue_vs_sat": {**POINTS, "description": "[hue degrees, saturation multiplier]."},
     "hue_vs_lum": {**POINTS, "description": "[hue degrees, brightness multiplier]. Grays stay."},
-    "sat_vs_sat": {**POINTS, "description": "[input chroma, saturation multiplier]. Chroma: skin about 0.03 to 0.06, strong colors 0.15 and up."},
+    "sat_vs_sat": {**POINTS, "description": "[input chroma, saturation multiplier]. Chroma: skin about 0.02 to 0.08 depending on the person, strong colors 0.15 and up."},
     "sat_vs_lum": {**POINTS, "description": "[input chroma, brightness multiplier]."},
 }
 
@@ -670,7 +670,7 @@ TOOLS: list[tuple[str, str, dict[str, Any], Callable[[dict[str, Any]], list[dict
                                                    "shot_id": {"type": "string"}},
                   "required": ["x", "y"], "description": "Point to key on, x and y from 0 to 1 (top left origin). Fills hue, sat and lum you leave out."},
          "hue": {**TRIPLE, "description": "[center, width, soft] in degrees. [] turns the hue key off."},
-         "sat": {**TRIPLE, "description": "[low, high, soft] in chroma (gray 0, skin about 0.03 to 0.06). [] turns it off."},
+         "sat": {**TRIPLE, "description": "[low, high, soft] in chroma (gray 0, skin about 0.02 to 0.08 depending on the person). [] turns it off."},
          "lum": {**TRIPLE, "description": "[low, high, soft] in DI (black 0, middle gray 0.336). [] turns it off."},
          "invert": {"type": "boolean", "description": "Correct everything outside the key."},
          "enabled": {"type": "boolean"},
@@ -725,8 +725,11 @@ INSTRUCTIONS = (
     "On clips with color_rebuild true (hard-compressed 8-bit files) add color with saturation, and keep color boost low: it "
     "lifts near-gray colors the most and turns leftover compression color into purple and green blotches on gray skies, "
     "walls and white clothes. "
-    "After every change, view_shot again and judge picture and numbers together: skin near the skin tone line and around "
-    "40 to 70 percent luma, blacks near 2 to 5 percent, nothing new clipped, no failing rules. Keep moves small. "
+    "After every change, view_shot again and judge picture and numbers together: skin hue near the skin tone line, blacks "
+    "near 2 to 5 percent, nothing new clipped, no failing rules. Keep moves small. "
+    "Skin brightness belongs to the person: skin differs between people by two stops and more, and darker skin sits lower "
+    "on the waveform when the shot is exposed right. Judge exposure from white and gray objects in the shot (a white shirt, "
+    "a wall), never from a skin brightness target, and never set one person's skin to another person's brightness. "
     "design_looks gives three starting points built from the shot. undo reverts the last change."
 )
 

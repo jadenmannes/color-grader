@@ -28,6 +28,13 @@ def _stops(lum: np.ndarray) -> np.ndarray:
     return np.log2(np.maximum(lum, 0.18 * 2.0 ** -8) / 0.18)
 
 
+# Skin limits in linear light, with a gray card at 0.18. People's skin reflects from about 5% (the darkest) to about
+# 45% (the lightest), so correctly exposed skin spans 0.05 to 0.45, and half that with the face in partial shadow.
+# Only skin outside the whole human range moves the exposure: the old floor of 0.07 lifted correctly exposed dark skin.
+SKIN_DARK = 0.02      # below this, any skin sits more than a stop under, even the darkest in shadow
+SKIN_BRIGHT = 0.55    # above this, even the lightest skin sits over
+
+
 def exposure_decision(lin: np.ndarray, skin_lin: np.ndarray | None, finished_picture: bool) -> tuple[float, list[str]]:
     """Exposure change in stops for a white-balanced linear sample, with reasons."""
     lum = lin @ DWG_Y
@@ -53,14 +60,14 @@ def exposure_decision(lin: np.ndarray, skin_lin: np.ndarray | None, finished_pic
             why.append("brightest tones sat far below white")
     if skin_lin is not None and len(skin_lin) >= 30:
         ls = float(np.median(skin_lin @ DWG_Y)) * 2.0 ** e
-        if ls > 0.55:
-            d = -0.7 * float(np.log2(ls / 0.55))
+        if ls > SKIN_BRIGHT:
+            d = -0.7 * float(np.log2(ls / SKIN_BRIGHT))
             e += d
             why.append("skin sat too bright")
-        elif ls < 0.07:
-            d = 0.7 * float(np.log2(0.07 / max(ls, 1e-4)))
+        elif ls < SKIN_DARK:
+            d = 0.7 * float(np.log2(SKIN_DARK / max(ls, 1e-4)))
             e += d
-            why.append("skin sat too dark")
+            why.append("skin sat far too dark for any skin")
     if finished_picture:
         e *= 0.5  # the camera finished this picture: half-strength corrections
     if e > 0.0 and p995 * 2.0 ** e > 8.0:

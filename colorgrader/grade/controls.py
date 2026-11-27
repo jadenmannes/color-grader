@@ -18,7 +18,7 @@ Units, all chosen so an assistant and a person read them the same way:
   Resolve    contrast, pivot, lift, gamma, gain, offset, saturation: the numbers Resolve shows
   DI         curve inputs and qualifier lum: DaVinci Intermediate, black 0, middle gray 0.336, scene white about 0.52
   chroma     saturation inputs of curves and qualifiers: HSL chroma of the working space,
-             gray 0, skin about 0.03 to 0.06, a clear sky about 0.06 to 0.12, strong colors 0.15 and up
+             gray 0, skin about 0.02 to 0.08 depending on the person, a clear sky about 0.06 to 0.12, strong colors 0.15 and up
 """
 from __future__ import annotations
 
@@ -599,7 +599,7 @@ SPEC: list[dict[str, Any]] = [
     _n("tint", "Tint", "Exposure and white balance", 0.0, -1.0, 1.0, 0.02, "stops",
        "Toward magenta (+) or green (-) on linear light.", "Gain G on the same linear node"),
     {**_n("hdr", "HDR zones", "HDR zones", None, None, None, None, "",
-          "Five zones by brightness: dark (under -3.5 stops), shadow (about -2), light (about +0.75, skin and upper mids), "
+          "Five zones by brightness: dark (under -3.5 stops), shadow (about -2), light (about +0.75, upper mids), "
           "highlight (about +2.5), specular (+4.5 and up). Each has exposure (stops), saturation (1 = unchanged), temp and tint (stops).",
           "HDR palette zone wheels (Exp, Sat, color). Set by eye: Resolve's zone math is unpublished", exact=False, kind="zones"),
      "fields": {"exposure": [-2.0, 2.0, 0.05], "saturation": [0.0, 2.0, 0.02], "temp": [-1.0, 1.0, 0.02], "tint": [-1.0, 1.0, 0.02]},
@@ -652,7 +652,7 @@ SPEC: list[dict[str, Any]] = [
        "Curves, Sat vs Lum. Resolve's form is unpublished, check by eye", exact=False, kind="curve"),
     _n("secondaries", "Secondaries", "Secondaries", [], None, None, None, "",
        "Qualifier corrections: key a hue, saturation and brightness range (for example the sky or the skin), then change exposure, "
-       "temp, tint, saturation or hue only there. Hue in degrees, sat in chroma (skin about 0.03 to 0.06), lum in DI.",
+       "temp, tint, saturation or hue only there. Hue in degrees, sat in chroma (skin about 0.02 to 0.08 depending on the person), lum in DI.",
        "Qualifier (HSL) in its own node. Ranges set by eye with Highlight mode on", exact=False, kind="secondaries"),
 ]
 

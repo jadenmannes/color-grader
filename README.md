@@ -50,7 +50,7 @@ A Python backend does all color math in 32-bit float with NumPy and colour-scien
 | --- | --- | --- |
 | 1 Input conversion | per clip | Camera curve and gamut to DaVinci Wide Gamut / Intermediate. Finished Rec.709 pictures enter through the exact inverse of the output conversion. |
 | 2 Balance | per shot | Exposure, white balance, black point. Gain and offset on linear light. Shots with no faces anchor on neutral objects, sky and foliage. |
-| 3 Shot match | per shot | Shots of one scene match each other. Different cameras match each other before the look. |
+| 3 Shot match | per shot | Shots of one scene match each other. Different cameras match each other before the look. Skin brightness belongs to the person: a shot follows the lead shot's skin only when the whole picture differs the same way (the same person filmed darker or brighter). A person with lighter or darker skin keeps their own brightness. |
 | 3b Shot trim | per shot | Any color control on one shot only. Empty unless you or an assistant set it. |
 | 4 Look | shared | Every color control below. One look for all shots. |
 | 5 Skin | shared | Keeps skin on the skin tone line. |
@@ -58,6 +58,8 @@ A Python backend does all color math in 32-bit float with NumPy and colour-scien
 | 7 Output conversion | shared | To Rec.709 with Resolve's DaVinci tone mapping. |
 
 Every step uses standard grading controls with Resolve's own math. The values in the recipe are the values the app renders with.
+
+People's skin reflects from about 5% to about 45% of the light, a range of three stops. The balance moves exposure for skin only outside that whole human range (far too dark below 0.02 in linear light with a gray card at 0.18, too bright above 0.55), and the shot match never sets one person's skin to another person's brightness. White balance anchors on neutral objects first: with a white or gray surface in the frame, skin has no pull on it. Skin keeps its hue near the skin tone line, which holds for light and dark skin alike.
 
 ### Matching a reference
 
@@ -268,7 +270,7 @@ uv run pytest
 
 - `tests/test_curves.py` checks F-Log and F-Log2 against the values in Fujifilm's data sheets (0% = code 95, 18% gray = 470 and 400, 90% = 705 and 570) and every shipped curve against colour-science.
 - `tests/test_camera_library.py` records a synthetic S-Log3 clip, adds a matching camera through the form's API with no code edits, converts and analyzes the clip.
-- `tests/test_grade.py` applies a known grade to a clip, uses the result as the reference and checks the app recovers the settings. It also covers balance, scene match, skin protection and the quality rules.
+- `tests/test_grade.py` applies a known grade to a clip, uses the result as the reference and checks the app recovers the settings. It also covers balance, scene match, skin protection and the quality rules, and that two people with skin 1.7 stops apart in one scene keep the same exposure (the old match lifted the darker person by a stop), while one person filmed darker still gets matched.
 - `tests/test_recipe_export.py` types the recipe numbers into Resolve's math and compares with the app's render, checks the `.cube` files against ffmpeg, and compares exported frames and file tags with the preview.
 - `tests/test_suggest.py` covers the look suggestions: three different looks, each inside the quality rules, chosen by the footage.
 - `tests/test_controls.py` checks every color control: neutral changes nothing, each control moves only what it should, strength and rounding hold, and the API takes partial edits and rejects bad input.

@@ -147,7 +147,7 @@ class Builder:
                 if m is hero:
                     continue
                 trim, why = match.exposure_trim(h, stat(m))
-                if trim:
+                if trim or why:       # a different person keeps their skin brightness: the panel says so
                     m["trim"], m["trim_reason"] = trim, f"Scene match: {why}."
                     self._balance(m)
 
