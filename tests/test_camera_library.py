@@ -245,6 +245,21 @@ def test_camera_xml_inside_the_clip(workdir):
     assert tags["xml.device.modelname"] == "ILCE-7CM2" and tags["xml.capturecolorprimaries"] == "S-Gamut3Cine"
 
 
+def test_a_camera_original_without_container_tags_still_reads_as_a_camera_file(workdir):
+    """An A7C II original carries its make and model only in the XML block inside the file. The build shares white
+    balance only within camera recordings, and treats a file with no make or model as an edit, so the XML must count."""
+    from colorgrader import media
+
+    folder = workdir / "xml_only"
+    folder.mkdir(exist_ok=True)
+    clip = slog3_clip(folder / "C0231.mp4", frames_each=8, tags={})
+    clip.write_bytes(clip.read_bytes() + SIDECAR_XML.encode("utf-8"))
+    info = media.probe(clip)
+    assert info["make"] == "Sony" and info["model"] == "ILCE-7CM2"
+    plain = slog3_clip(folder / "export.mp4", frames_each=8, tags={})            # an editor's export: nothing to read
+    assert not (media.probe(plain)["make"] or media.probe(plain)["model"])
+
+
 def test_jobs_run_one_at_a_time():
     """Two jobs never decode side by side: the second waits for the first. A memory failure reads as plain words."""
     import threading
